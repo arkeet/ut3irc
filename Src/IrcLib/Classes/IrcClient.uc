@@ -148,6 +148,53 @@ event Closed()
     Destroy();
 }
 
+static function bool MatchString(string Pattern, string Str, optional bool bCaseSensitive = false)
+{
+    local int i, j;
+
+    i = 0;
+    j = 0;
+
+    while (Len(Str) > j)
+    {
+        if (Mid(Pattern, i, 1) == "*")
+        {
+            do
+                i++;
+            until (Mid(Pattern, i, 1) != "*");
+            if (Len(Pattern) <= i)
+                return true;
+            while (Len(Str) > j)
+            {
+                if (MatchString(Mid(Pattern, i), Mid(Str, j)))
+                    return true;
+                j++;
+            }
+            return false;
+        }
+        else
+        {
+            if (bCaseSensitive)
+            {
+                if (Mid(Pattern, i, 1) != Mid(Str, j, 1))
+                    return false;
+            }
+            else
+            {
+                if (!(Mid(Pattern, i, 1) ~= Mid(Str, j, 1)))
+                    return false;
+            }
+        }
+        i++;
+        j++;
+    }
+
+    while (Mid(Pattern, i, 1) == "*")
+        i++;
+
+    return Len(Pattern) <= i;
+}
+
 static function Split2(string Separator, string Str, out string LeftPart, out string RightPart)
 {
     local int Pos;
@@ -242,7 +289,7 @@ function RegisterHandler(delegate<IrcEventDelegate> Handler, optional string Com
     local IrcEvent E;
     E.Command = Command;
     E.Handler = Handler;
-    Events[Events.Length] = E;
+    Events.AddItem(E);
 }
 
 event ReceivedLine(string Line)
@@ -266,7 +313,7 @@ function IrcChannel AddChannel(string Channel)
         C = new class'IrcChannel';
         C.Channel = Channel;
         C.Irc = self;
-        Channels[Channels.Length] = C;
+        Channels.AddItem(C);
 
         Log("Added channel" @ Channel, LL_Debug);
     }

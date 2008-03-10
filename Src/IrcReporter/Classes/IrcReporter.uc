@@ -7,7 +7,7 @@ class IrcReporter extends IrcClient
 var config string ReporterServer;
 var config string ReporterChannel;
 var config string CommandPrefix;
-var config string AdminHostmask;
+var config array<string> AdminHostmasks;
 var config array<string> ConnectCommands;
 
 var class<IrcSpectator> ReporterSpectatorClass;
@@ -19,6 +19,11 @@ struct PlayerListEntry
     var string PlayerName;
     var byte Team;
     var int Score;
+};
+
+struct PlayerList
+{
+    var array<PlayerListEntry> Entries;
 };
 
 simulated function PostBeginPlay()
@@ -66,28 +71,23 @@ function ShowTeamScores()
 {
 }
 
-const NumPlayerLists = 2;
 function ShowPlayerScores()
 {
-    local int i, n;
     local PlayerReplicationInfo PRI;
-    local array<PlayerListEntry> PlayerLists[NumPlayerLists];
-    local array<PlayerListEntry> Player;
+    local array<PlayerList> PlayerLists;
+    local PlayerListEntry Player;
 
-    WorldInfo.GRI.SortPRIArray();
-    for (i = 0; i < WorldInfo.GRI.PRIArray.Length; i++)
+    foreach WorldInfo.GRI.PRIArray(PRI)
     {
-        PRI = WorldInfo.GRI.PRIArray[i];
-        if (C.PlayerReplicationInfo.bOnlySpectator)
+        if (PRI.bOnlySpectator)
             continue;
 
         Player.PRI = PRI;
         Player.PlayerName = PRI.GetPlayerAlias();
-        Player.Team = WorldInfo.Game.bTeamGame ? PRI.GetTeamNum() : 255;
+        Player.Team = WorldInfo.Game.bTeamGame ? PRI.GetTeamNum() : byte(255);
         Player.Score = PRI.Score;
 
-        n = Player.Team >= NumPlayerLists ? 0 : Player.Team;
-        PlayerLists[n][PlayerLists[n].Length] = Player;
+        PlayerLists[Player.Team >= 2 ? 0 : int(Player.Team)].Entries.AddItem(Player);
     }
 }
 
@@ -103,7 +103,15 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
 {
     Log(self @ "ReceiveLocalizedMessage" @ Message @ Switch @
         RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
-    ReporterMessage("ReceiveLocalizedMessage:" @ Message @ switch @ Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject));
+    if (Message == class'UTStartupMessage')
+    {
+        if (Switch == 5)
+            ReporterMessage("The match has begun!");
+    }
+    else
+    {
+        ReporterMessage("~:" @ Message @ switch @ Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject));
+    }
 }
 
 ////////// IRC handlers
@@ -127,7 +135,7 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
                 for (i = 0; i < WorldInfo.GRI.PRIArray.Length; i++)
                 {
                     PRI = WorldInfo.GRI.PRIArray[i];
-                    if (C.PlayerReplicationInfo.bOnlySpectator)
+                    if (PRI.bOnlySpectator)
                         continue;
 
                     if (Str != "")
@@ -147,9 +155,16 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
                 ReporterSpectator.ServerSay(ParseHostmask(Message.Prefix).Nick $ ":" @ Arg);
             }
         }
-        if (Cmd ~= "cmd" && Right(Message.Prefix, Len(AdminHostmask)) ~= AdminHostmask)
+        if (Cmd ~= "cmd")
         {
-            SendLine(Arg);
+            foreach AdminHostmasks(Str)
+            {
+                if (MatchString(Str, Message.Prefix))
+                {
+                    SendLine(Arg);
+                    break;
+                }
+            }
         }
     }
 }
@@ -160,9 +175,8 @@ defaultproperties
 
     NickName="ut3reporter"
     RealName="UT3 IRC Reporter"
-    ReporterServer="irc.enterthegame.com"
+    ReporterServer="irc.gameradius.org"
     ReporterChannel="#ut3irc.test"
     CommandPrefix="!"
-    AdminHostmask="nereid@J2Clan.on.EnterTheGame.Com"
 }
 
