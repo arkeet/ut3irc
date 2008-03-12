@@ -33,6 +33,7 @@ simulated function PostBeginPlay()
     ReporterSpectator = Spawn(ReporterSpectatorClass);
     ReporterSpectator.Reporter = self;
 
+    RegisterHandler(IrcReporter_Handler_JOIN, "JOIN");
     RegisterHandler(IrcReporter_Handler_PRIVMSG, "PRIVMSG");
     Connect(ReporterServer);
 }
@@ -52,8 +53,6 @@ function Registered()
         SendLine(Cmd);
     }
     JOIN(ReporterChannel);
-    PRIVMSG(ReporterChannel, "Current game:" @ IrcBold(WorldInfo.Game.GameName)
-        @ "on" @ IrcBold(WorldInfo.Title));
 }
 
 function ReporterMessage(string Text)
@@ -129,6 +128,12 @@ function string FormatScoreListEntry(string ScoreName, int Score, byte Team, int
 }
 
 const ColWidth = 24;
+
+function AnnounceCurrentGame()
+{
+    ReporterMessage("Current game:" @ IrcBold(WorldInfo.Game.GameName)
+        @ "on" @ IrcBold(WorldInfo.GetMapName()));
+}
 
 function ShowTeamScores()
 {
@@ -209,8 +214,6 @@ function TeamMessage(PlayerReplicationInfo PRI, coerce string S, name Type, opti
 
 function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switch, optional PlayerReplicationInfo RelatedPRI_1, optional PlayerReplicationInfo RelatedPRI_2, optional Object OptionalObject)
 {
-    Log(self @ "ReceiveLocalizedMessage" @ Message @ Switch @
-        RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
     if (Message == class'UTStartupMessage')
     {
         if (Switch == 5)
@@ -218,11 +221,20 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
     }
     else
     {
-        Log("ReceiveLocalizedMessage:" @ Message @ switch @ Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject), LL_Debug);
+        Log(self @ "ReceiveLocalizedMessage" @ Message @ Switch @
+            RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
     }
 }
 
 ////////// IRC handlers
+
+function IrcReporter_Handler_JOIN(IrcMessage Message)
+{
+    if (Message.Params[0] ~= ReporterChannel && ParseHostmask(Message.Prefix).Nick == CurrentNick)
+    {
+        AnnounceCurrentGame();
+    }
+}
 
 function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
 {
@@ -254,6 +266,10 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
             {
                 ShowTeamScores();
                 ShowPlayerScores();
+            }
+            else if (Cmd ~= "status")
+            {
+                AnnounceCurrentGame();
             }
             else if (Cmd ~= "say")
             {

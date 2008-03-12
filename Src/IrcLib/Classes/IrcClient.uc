@@ -262,9 +262,10 @@ function string MakeMessage(IrcMessage Message)
 
     foreach Message.Params(Param, i)
     {
-        Result $=
-            (i == Message.Params.Length - 1 && Message.bFinalParamHasColon) ?
-            " :" : " " $ Param;
+        if (i == Message.Params.Length - 1 && Message.bFinalParamHasColon)
+            Result $= " :" $ Param;
+        else
+            Result $= " " $ Param;
     }
 
     return Result;
@@ -371,8 +372,6 @@ function ReceivedMessage(IrcMessage Message)
 function ReceivedCTCP(string Command, string Text, IrcMessage Message)
 {
     local string Response;
-
-    Log("ReceivedCTCP" @ Command @ Text, LL_Debug);
 
     if (Command ~= "CLIENTINFO")
     {
@@ -489,7 +488,7 @@ function IrcClient_CTCPHandler(IrcMessage Message)
         return;
 
     if (Right(Text, 1) == Chr(1))
-        Text = Mid(Text, 1, Len(Text) - 1);
+        Text = Mid(Text, 1, Len(Text) - 2);
     else
         Text = Mid(Text, 1);
 
@@ -626,6 +625,6 @@ defaultproperties
     UserName="ut3irc"
     RealName="UT3 IRC"
 
-    VersionString="UT3 IrcLib version $Rev$"
+    VersionString="UT3 IrcLib - SVN $Rev$"
 }
 

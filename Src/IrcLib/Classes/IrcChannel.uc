@@ -45,5 +45,5 @@ function SendMessage(string Text)
 
 defaultproperties
 {
-    ModeChars="@+%~"
+    ModeChars="~&@%+"
 }
