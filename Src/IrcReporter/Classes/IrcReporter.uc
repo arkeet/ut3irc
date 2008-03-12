@@ -1,5 +1,5 @@
 //-----------------------------------------------------------
-//
+// $Id$
 //-----------------------------------------------------------
 class IrcReporter extends IrcClient
     config(IrcReporter);
@@ -44,18 +44,16 @@ event Destroyed()
 
 function Registered()
 {
-    local int i;
     local string Cmd;
 
-    for (i = 0; i < ConnectCommands.Length; i++)
+    foreach ConnectCommands(Cmd)
     {
-        Cmd = ConnectCommands[i];
         Cmd = Repl(Cmd, "%n", CurrentNick);
         SendLine(Cmd);
     }
     JOIN(ReporterChannel);
     PRIVMSG(ReporterChannel, "Current game:" @ IrcBold(WorldInfo.Game.GameName)
-        @ "on" @ IrcBold(WorldInfo.GetMapName()));
+        @ "on" @ IrcBold(WorldInfo.Title));
 }
 
 function ReporterMessage(string Text)
@@ -67,15 +65,103 @@ function ReporterMessage(string Text)
         C.SendMessage(Text);
 }
 
+function string StringRepeat(string Str, int Times)
+{
+    local string Result;
+    Result = "";
+    while (Times > 0)
+    {
+        Result $= Str;
+        Times--;
+    }
+    return Result;
+}
+
+function string GetTeamName(byte Team)
+{
+    switch (Team)
+    {
+        case 0:
+            return "Red Team";
+        case 1:
+            return "Blue Team";
+        case 2:
+            return "Green Team";
+        case 3:
+            return "Gold Team";
+        default:
+            return "No Team";
+    }
+}
+
+function byte GetTeamIrcColor(byte Team)
+{
+    switch (Team)
+    {
+        case 0:
+            return IrcRed;
+        case 1:
+            return IrcBlue;
+        case 2:
+            return IrcGreen;
+        case 3:
+            return IrcOrange;
+        default:
+            return IrcGreen;
+    }
+}
+
+function string FormatScoreListEntry(string ScoreName, int Score, byte Team, int Width)
+{
+    local string LeftPart, RightPart, Ret;
+
+    LeftPart = ScoreName;
+    RightPart = string(Score);
+
+    if (Len(LeftPart) + Len(RightPart) >= Width)
+        return Left(LeftPart, Width - Len(RightPart));
+    else
+    {
+        Ret = LeftPart $ StringRepeat(" ", Width - Len(LeftPart) - Len(RightPart)) $ RightPart;
+        Ret = IrcColor(Ret, GetTeamIrcColor(Team));
+        return Ret;
+    }
+}
+
+const ColWidth = 24;
+
 function ShowTeamScores()
 {
+    local string Str;
+    local int i;
+    local TeamInfo Team;
+
+    if (UTTeamGame(WorldInfo.Game) != none)
+    {
+        Str = "";
+        for (i = 0; i < 2; i++)
+        {
+            Team = UTTeamGame(WorldInfo.Game).Teams[i];
+            if (i > 0)
+                Str $= " | ";
+            Str $= IrcBold(FormatScoreListEntry(GetTeamName(i), Team.Score, i, ColWidth));
+        }
+        ReporterMessage(Str);
+    }
 }
 
 function ShowPlayerScores()
 {
     local PlayerReplicationInfo PRI;
     local array<PlayerList> PlayerLists;
+    local int i, j;
+    local PlayerList L;
     local PlayerListEntry Player;
+    local int MaxPlayerListLen;
+    local string Str;
+
+    PlayerLists.Length = WorldInfo.Game.bTeamGame ? 2 : 1;
+    MaxPlayerListLen = 0;
 
     foreach WorldInfo.GRI.PRIArray(PRI)
     {
@@ -87,7 +173,29 @@ function ShowPlayerScores()
         Player.Team = WorldInfo.Game.bTeamGame ? PRI.GetTeamNum() : byte(255);
         Player.Score = PRI.Score;
 
-        PlayerLists[Player.Team >= 2 ? 0 : int(Player.Team)].Entries.AddItem(Player);
+        i = Player.Team >= 2 ? 0 : int(Player.Team);
+        PlayerLists[i].Entries.AddItem(Player);
+        MaxPlayerListLen = Max(PlayerLists[i].Entries.Length, MaxPlayerListLen);
+    }
+
+    for (i = 0; i < MaxPlayerListLen; i++)
+    {
+        Str = "";
+        foreach PlayerLists(L, j)
+        {
+            if (j > 0)
+                Str $= " | ";
+            if (i < L.Entries.Length)
+            {
+                Player = L.Entries[i];
+                Str $= FormatScoreListEntry(Player.PlayerName, Player.Score, Player.Team, ColWidth);
+            }
+            else
+            {
+                Str $= StringRepeat(" ", ColWidth);
+            }
+        }
+        ReporterMessage(Str);
     }
 }
 
@@ -110,7 +218,7 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
     }
     else
     {
-        ReporterMessage("~:" @ Message @ switch @ Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject));
+        Log("ReceiveLocalizedMessage:" @ Message @ switch @ Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject), LL_Debug);
     }
 }
 
@@ -120,7 +228,6 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
 {
     local string Cmd, Arg;
     local string Str;
-    local int i;
     local PlayerReplicationInfo PRI;
 
     if (Left(Message.Params[1], Len(CommandPrefix)) == CommandPrefix)
@@ -132,16 +239,14 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
             if (Cmd ~= "players")
             {
                 Str = "";
-                for (i = 0; i < WorldInfo.GRI.PRIArray.Length; i++)
+                foreach WorldInfo.GRI.PRIArray(PRI)
                 {
-                    PRI = WorldInfo.GRI.PRIArray[i];
                     if (PRI.bOnlySpectator)
                         continue;
 
                     if (Str != "")
                         Str $= " ";
-                    Str $= PRI.GetPlayerAlias() $ "(" $
-                        int(PRI.Score) $ ")";
+                    Str $= PRI.GetPlayerAlias() $ "(" $ int(PRI.Score) $ ")";
                 }
                 ReporterMessage(Str);
             }

@@ -1,5 +1,5 @@
 //-----------------------------------------------------------
-//
+// $Id$
 //-----------------------------------------------------------
 class IrcClient extends TcpLink
     config(IrcLib);
@@ -24,7 +24,7 @@ enum ELogLevel
     LL_Warning,
     LL_Error
 };
-var ELogLevel LogLevel;
+var config ELogLevel LogLevel;
 
 enum EIrcState
 {
@@ -162,17 +162,20 @@ static function bool MatchString(string Pattern, string Str, optional bool bCase
             do
                 i++;
             until (Mid(Pattern, i, 1) != "*");
+
             if (Len(Pattern) <= i)
                 return true;
+
             while (Len(Str) > j)
             {
                 if (MatchString(Mid(Pattern, i), Mid(Str, j)))
                     return true;
                 j++;
             }
+
             return false;
         }
-        else
+        else if (Mid(Pattern, i, 1) != "?")
         {
             if (bCaseSensitive)
             {
@@ -250,18 +253,18 @@ function string MakeMessage(IrcMessage Message)
 {
     local string Result;
     local int i;
+    local string Param;
 
     if (Message.Prefix != "")
         Result $= ":" $ Message.Prefix $ " ";
 
     Result $= Message.Command;
 
-    for (i = 0; i < Message.Params.Length; i++)
+    foreach Message.Params(Param, i)
     {
-        if (i == Message.Params.Length - 1 && Message.bFinalParamHasColon)
-            Result $= " :" $ Message.Params[i];
-        else
-            Result $= " " $ Message.Params[i];
+        Result $=
+            (i == Message.Params.Length - 1 && Message.bFinalParamHasColon) ?
+            " :" : " " $ Param;
     }
 
     return Result;
@@ -333,14 +336,15 @@ function RemoveChannel(string Channel)
 
 function IrcChannel GetChannel(string Channel, optional out int Index)
 {
+    local IrcChannel C;
     local int i;
 
-    for (i = 0; i < Channels.Length; i++)
+    foreach Channels(C, i)
     {
-        if (Channels[i].Channel ~= Channel)
+        if (C.Channel ~= Channel)
         {
             Index = i;
-            return Channels[i];
+            return C;
         }
     }
     Index = -1;
@@ -351,14 +355,14 @@ function IrcChannel GetChannel(string Channel, optional out int Index)
 
 function ReceivedMessage(IrcMessage Message)
 {
-    local int i;
+    local IrcEvent E;
     local delegate<IrcEventDelegate> Handler;
 
-    for (i = 0; i < Events.Length; i++)
+    foreach Events(E)
     {
-        if (Events[i].Command ~= Message.Command || Events[i].Command == "")
+        if (E.Command ~= Message.Command || E.Command == "")
         {
-            Handler = Events[i].Handler;
+            Handler = E.Handler;
             Handler(Message);
         }
     }
@@ -615,13 +619,13 @@ function string IrcResetFormat()
 
 defaultproperties
 {
-    LogLevel=LL_Debug
+    LogLevel=LL_Notice
 
     DefaultPort=6667
     NickName="ut3irc"
     UserName="ut3irc"
     RealName="UT3 IRC"
 
-    VersionString="UT3 IrcLib version 20080221"
+    VersionString="UT3 IrcLib version $Rev$"
 }
 
