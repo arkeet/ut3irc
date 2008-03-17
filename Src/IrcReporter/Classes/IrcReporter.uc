@@ -10,8 +10,22 @@ var config string CommandPrefix;
 var config array<string> AdminHostmasks;
 var config array<string> ConnectCommands;
 
+var config bool bEnableChat;
+var config bool bEnableTwoWayChat;
+var config bool bRequireSayCommand;
+var config string ChatChannel;
+var string RealChatChannel;
+
+var localized string RunOverString, SpiderMineString, ScorpionKamikazeString, ViperKamikazeString, TelefragString;
+
+var class<GameRules> GameRulesClass;
+var GameRules GameRules;
+
 var class<IrcSpectator> ReporterSpectatorClass;
 var IrcSpectator ReporterSpectator;
+
+var name LastGameInfoState;
+var Actor LastLeader;
 
 struct PlayerListEntry
 {
@@ -33,13 +47,24 @@ simulated function PostBeginPlay()
     ReporterSpectator = Spawn(ReporterSpectatorClass);
     ReporterSpectator.Reporter = self;
 
+    RealChatChannel = (ChatChannel == "" ? ReporterChannel : ChatChannel);
+
     RegisterHandler(IrcReporter_Handler_JOIN, "JOIN");
     RegisterHandler(IrcReporter_Handler_PRIVMSG, "PRIVMSG");
     Connect(ReporterServer);
+
+    WorldInfo.Game.AddGameRules(GameRulesClass);
+}
+
+simulated function Tick(float DeltaTime)
+{
+    super.Tick(DeltaTime);
+    CheckGameStatus();
 }
 
 event Destroyed()
 {
+    QUIT("Bye");
     ReporterSpectator.Destroy();
 }
 
@@ -53,15 +78,72 @@ function Registered()
         SendLine(Cmd);
     }
     JOIN(ReporterChannel);
+    if (!(RealChatChannel ~= ReporterChannel))
+        JOIN(RealChatChannel);
 }
 
-function ReporterMessage(string Text)
+function string FormatTime(int Time)
+{
+    return class'UTHUD'.static.FormatTime(Time);
+}
+
+function string GetTimestamp()
+{
+    local string Str;
+
+    if (WorldInfo.Game.GetStateName() == 'MatchInProgress')
+    {
+        if (WorldInfo.GRI.TimeLimit != 0)
+        {
+            if (WorldInfo.Game.bOverTime)
+                Str = "Overtime";
+            else
+                Str = FormatTime(WorldInfo.GRI.RemainingTime);
+        }
+        else
+        {
+            Str = FormatTime(WorldInfo.GRI.ElapsedTime);
+        }
+        return "[" $ Str $ "] ";
+    }
+    else
+    {
+        return "";
+    }
+}
+
+function ReporterMessage(string Text, optional bool bNoTimestamp)
 {
     local IrcChannel C;
 
     C = GetChannel(ReporterChannel);
     if (C != none)
+    {
+        if (!bNoTimestamp)
+            Text = GetTimestamp() $ Text;
         C.SendMessage(Text);
+    }
+    else
+    {
+        Log("Tried to send a reporter message while not in the channel!", LL_Warning);
+    }
+}
+
+function ChatChannelMessage(string Text, optional bool bNoTimestamp)
+{
+    local IrcChannel C;
+
+    C = GetChannel(RealChatChannel);
+    if (C != none)
+    {
+        if (!bNoTimestamp)
+            Text = GetTimestamp() $ Text;
+        C.SendMessage(Text);
+    }
+    else
+    {
+        Log("Tried to send a chat message while not in the channel!", LL_Warning);
+    }
 }
 
 function string StringRepeat(string Str, int Times)
@@ -110,6 +192,20 @@ function byte GetTeamIrcColor(byte Team)
     }
 }
 
+function string FormatPlayerName(PlayerReplicationInfo PRI, optional coerce string Text)
+{
+    if (Text == "")
+        Text = PRI.GetPlayerAlias();
+    return IrcBold(IrcColor(Text, GetTeamIrcColor(PRI.GetTeamNum())));
+}
+
+function string FormatTeamName(int Team, optional coerce string Text)
+{
+    if (Text == "")
+        Text = GetTeamName(byte(Team));
+    return IrcBold(IrcColor(Text, GetTeamIrcColor(byte(Team))));
+}
+
 function string FormatScoreListEntry(string ScoreName, int Score, byte Team, int Width)
 {
     local string LeftPart, RightPart, Ret;
@@ -135,6 +231,18 @@ function AnnounceCurrentGame()
         @ "on" @ IrcBold(WorldInfo.GetMapName()));
 }
 
+function ShowShortTeamScores()
+{
+    if (UTTeamGame(WorldInfo.Game) != none)
+    {
+        ReporterMessage("Current score:"
+            @ FormatTeamName(0, int(UTTeamGame(WorldInfo.Game).Teams[0].Score))
+            @ "-"
+            @ FormatTeamName(1, int(UTTeamGame(WorldInfo.Game).Teams[1].Score))
+            );
+    }
+}
+
 function ShowTeamScores()
 {
     local string Str;
@@ -143,7 +251,7 @@ function ShowTeamScores()
 
     if (UTTeamGame(WorldInfo.Game) != none)
     {
-        Str = "";
+        Str = "Scores: [ ";
         for (i = 0; i < 2; i++)
         {
             Team = UTTeamGame(WorldInfo.Game).Teams[i];
@@ -151,6 +259,7 @@ function ShowTeamScores()
                 Str $= " | ";
             Str $= IrcBold(FormatScoreListEntry(GetTeamName(i), Team.Score, i, ColWidth));
         }
+        Str $= " ]";
         ReporterMessage(Str);
     }
 }
@@ -185,7 +294,7 @@ function ShowPlayerScores()
 
     for (i = 0; i < MaxPlayerListLen; i++)
     {
-        Str = "";
+        Str = "Scores: [ ";
         foreach PlayerLists(L, j)
         {
             if (j > 0)
@@ -200,30 +309,243 @@ function ShowPlayerScores()
                 Str $= StringRepeat(" ", ColWidth);
             }
         }
+        Str $= " ]";
         ReporterMessage(Str);
     }
 }
 
 function TeamMessage(PlayerReplicationInfo PRI, coerce string S, name Type, optional float MsgLifeTime)
 {
-    if (Type == 'Say')
+    if (bEnableChat && Type == 'Say')
     {
-        ReporterMessage(IrcBold(PRI.GetPlayerAlias() $ ":") @ S);
+        ChatChannelMessage(FormatPlayerName(PRI, PRI.GetPlayerAlias() $ ":") @ S);
     }
+}
+
+function bool ShowMessage(name MessageType)
+{
+    // TODO
+    Log("ShowMessage" @ MessageType, LL_Debug);
+    return (MessageType != 'Misc');
+}
+
+function ThrottleMessage()
+{
+    ReporterMessage("I had to drop some messages to catch up.");
+    if (!(RealChatChannel ~= ReporterChannel))
+        ChatChannelMessage("I had to drop some messages to catch up.");
 }
 
 function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switch, optional PlayerReplicationInfo RelatedPRI_1, optional PlayerReplicationInfo RelatedPRI_2, optional Object OptionalObject)
 {
-    if (Message == class'UTStartupMessage')
+    local string PRI1Name, PRI2Name;
+    local string Str;
+    local class<UTDamageType> DT;
+
+    PRI1Name = RelatedPri_1 != none ? FormatPlayerName(RelatedPRI_1) : "someone";
+    PRI2Name = RelatedPri_2 != none ? FormatPlayerName(RelatedPRI_2) : "someone";
+
+    Log(self @ "ReceiveLocalizedMessage" @ Message @ switch @
+        RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
+
+    if (ClassIsChildOf(Message, class'UTStartupMessage'))
     {
+        if (!ShowMessage('Startup'))
+            return;
+
         if (Switch == 5)
             ReporterMessage("The match has begun!");
     }
+    else if (ClassIsChildOf(Message, class'UTDeathMessage'))
+    {
+        if (!ShowMessage('Kill'))
+            return;
+
+        Str = ".";
+        DT = Class<UTDamageType>(OptionalObject);
+        if (DT != None)
+        {
+            if (DT.default.DamageWeaponClass != none)
+                Str = DT.default.DamageWeaponClass.default.ItemName;
+            else if ((class<UTDmgType_RanOver>(DT) != none) || (DT.default.KillStatsName == 'KILLS_SCORPIONBLADE'))
+                Str = RunOverString;
+            else if (DT.default.KillStatsName == 'KILLS_SPIDERMINE')
+                Str = SpiderMineString;
+            else if (DT.default.KillStatsName == 'KILLS_SCORPIONSELFDESTRUCT')
+                Str = ScorpionKamikazeString;
+            else if (DT.default.KillStatsName == 'KILLS_VIPERSELFDESTRUCT')
+                Str = ViperKamikazeString;
+            else if (DT.default.KillStatsName == 'KILLS_TRANSLOCATOR')
+                Str = TelefragString;
+        }
+        if (Str != ".")
+            Str = " (" $ Str $ ").";
+
+        if (RelatedPRI_1 == none)
+            ReporterMessage(PRI2Name @ "killed" @ (RelatedPRI_2.bIsFemale ? "herself" : "himself") $ Str);
+        else
+            ReporterMessage(PRI1Name @ "killed" @ PRI2Name $ Str);
+    }
+    else if (ClassIsChildOf(Message, class'UTKillingSpreeMessage'))
+    {
+        if (!ShowMessage('Spree'))
+            return;
+
+        if (RelatedPRI_2 == none)
+        {
+            ReporterMessage(PRI1Name @ class'UTKillingSpreeMessage'.default.SpreeNote[Switch]);
+        }
+        else
+        {
+            if (RelatedPRI_1 == RelatedPRI_2)
+            {
+                Str = RelatedPRI_1.bIsFemale ?
+                    class'UTKillingSpreeMessage'.default.EndFemaleSpree :
+                    class'UTKillingSpreeMessage'.default.EndSelfSpree;
+                ReporterMessage(PRI1Name @ Str);
+            }
+            else
+            {
+                Str = class'UTKillingSpreeMessage'.default.EndSpreeNote;
+                ReporterMessage(PRI1Name @ Str @ PRI2Name);
+            }
+        }
+    }
+    else if (ClassIsChildOf(Message, class'UTCarriedObjectMessage'))
+    {
+        if (!ShowMessage('CarriedObject'))
+            return;
+
+        Str = (Switch < 7 ? "Red" : "Blue");
+
+        if (Message == class'UTCTFMessage')
+            Str @= "flag";
+        else if (Message == class'UTOnslaughtOrbMessage')
+            Str @= "orb";
+        else
+            Str @= "item";
+
+        Str = IrcBold(IrcColor(Str, GetTeamIrcColor(Switch < 7 ? 0 : 1)));
+
+        switch (Switch % 7)
+        {
+            case 0:
+                Str @= "captured by" @ PRI1Name;
+                break;
+            case 1:
+                Str @= "returned by" @ PRI1Name;
+                break;
+            case 2:
+                Str @= "dropped by" @ PRI1Name;
+                break;
+            case 3:
+                Str @= "returned";
+                break;
+            case 4:
+                Str @= "picked up";
+                break;
+            case 5:
+                Str @= "returned";
+                break;
+            case 6:
+                Str @= "taken by" @ PRI1Name;
+                break;
+        }
+
+        ReporterMessage(Str $ ".");
+    }
+    else if (ClassIsChildOf(Message, class'UTTeamScoreMessage'))
+    {
+        if (!ShowMessage('TeamScore'))
+            return;
+        if (Switch < 6)
+        {
+            switch (Switch / 2)
+            {
+                case 0:
+                    ReporterMessage(FormatTeamName(Switch % 2) @ "scores!");
+                    break;
+                case 1:
+                    ReporterMessage(FormatTeamName(Switch % 2) @ "increases their lead!");
+                    break;
+                case 2:
+                    ReporterMessage(FormatTeamName(Switch % 2) @ "has taken the lead!");
+                    break;
+            }
+            ShowShortTeamScores();
+        }
+    }
+    else if (ShowMessage('Misc'))
+    {
+        ReporterMessage(Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject));
+    }
+}
+
+function CheckGameStatus()
+{
+    local name GameInfoState;
+
+/*
+    local int i;
+    local PlayerReplicationInfo PRI;
+
+    if (UTTeamGame(WorldInfo.Game) != none)
+    {
+        for (i = 0; i < 2; i++)
+        {
+            if (LastLeader == none ||
+                UTTeamGame(WorldInfo.Game).Teams[i].Score > TeamInfo(LastLeader).Score)
+            {
+                LastLeader = UTTeamGame(WorldInfo.Game).Teams[i];
+                ReporterMessage(FormatTeamName(i) @ "has taken the lead with"
+                    @ FormatTeamName(i, int(TeamInfo(LastLeader).Score)));
+                break;
+            }
+        }
+    }
     else
     {
-        Log(self @ "ReceiveLocalizedMessage" @ Message @ Switch @
-            RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
+        WorldInfo.Game.GameReplicationInfo.SortPRIArray();
+        if (WorldInfo.Game.GameReplicationInfo.PRIArray.Length > 0)
+        {
+            PRI = WorldInfo.Game.GameReplicationInfo.PRIArray[0];
+            if (PRI != LastLeader && PRI.Score > PlayerReplicationInfo(LastLeader).Score)
+            {
+                LastLeader = PRI;
+                ReporterMessage(FormatPlayerName(PRI) @ "has taken the lead with"
+                    @ FormatPlayerName(PRI, int(PRI.Score)));
+            }
+        }
     }
+*/
+
+    GameInfoState = WorldInfo.Game.GetStateName();
+    if (GameInfoState != LastGameInfoState)
+    {
+        LastGameInfoState = GameInfoState;
+        switch(GameInfoState)
+        {
+            case 'PendingMatch':
+                AnnounceCurrentGame();
+                break;
+            case 'MatchOver':
+                ReporterMessage("Match has ended.");
+                ShowTeamScores();
+                ShowPlayerScores();
+                break;
+            case 'RoundOver':
+                ReporterMessage("Round has ended.");
+                ShowTeamScores();
+                ShowPlayerScores();
+                break;
+        }
+    }
+}
+
+function InGameChat(string Nick, string Text)
+{
+    if (bEnableChat && bEnableTwoWayChat)
+        ReporterSpectator.ServerSay(Nick $ ":" @ Text);
 }
 
 ////////// IRC handlers
@@ -271,9 +593,12 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
             {
                 AnnounceCurrentGame();
             }
-            else if (Cmd ~= "say")
+        }
+        if (Message.Params[0] ~= RealChatChannel)
+        {
+            if (Cmd ~= "say")
             {
-                ReporterSpectator.ServerSay(ParseHostmask(Message.Prefix).Nick $ ":" @ Arg);
+                InGameChat(ParseHostmask(Message.Prefix).Nick, Arg);
             }
         }
         if (Cmd ~= "cmd")
@@ -288,16 +613,32 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
             }
         }
     }
+    else if (Message.Params[0] ~= RealChatChannel && !bRequireSayCommand)
+    {
+        InGameChat(ParseHostmask(Message.Prefix).Nick, Message.Params[1]);
+    }
 }
 
 defaultproperties
 {
+    RunOverString="Hit and Run"
+    SpiderMineString="Spider Mine"
+    ScorpionKamikazeString="Scorpion Self Destruct"
+    ViperKamikazeString="Viper Self Destruct"
+    TelefragString="Telefrag"
+
     ReporterSpectatorClass="IrcReporter.IrcSpectator"
+
+    bEnableChat=true
+    bEnableTwoWayChat=true
+    bRequireSayCommand=true
 
     NickName="ut3reporter"
     RealName="UT3 IRC Reporter"
     ReporterServer="irc.gameradius.org"
     ReporterChannel="#ut3irc.test"
     CommandPrefix="!"
+
+    GameRulesClass=class'UTGameRules_IrcReporter'
 }
 

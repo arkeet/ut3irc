@@ -50,6 +50,15 @@ var config string VersionString;
 
 var string NamesReplyUsers;
 
+var config bool bThrottleEnable;
+var config float ThrottleCommandPenalty;
+var config float ThrottleMessagePenalty;
+var config float ThrottleMaxPenalty;
+var config int ThrottleMaxMessageQueue;
+
+var float ThrottlePenalty;
+var array<string> ThrottleQueue;
+
 struct IrcEvent
 {
     var string Command;
@@ -302,10 +311,69 @@ event ReceivedLine(string Line)
     ReceivedMessage(ParseMessage(Line));
 }
 
+function ThrottleMessage();
+
+simulated function Tick(float DeltaTime)
+{
+    local IrcMessage Message;
+    local int i;
+    local string Str;
+
+    if (!bThrottleEnable)
+    {
+        foreach ThrottleQueue(Str)
+            SendText(Str);
+        ThrottleQueue.Length = 0;
+        return;
+    }
+
+    ThrottlePenalty = FMax(0, ThrottlePenalty - DeltaTime / WorldInfo.TimeDilation);
+
+    if (ThrottleQueue.Length > ThrottleMaxMessageQueue)
+    {
+        i = 0;
+        foreach ThrottleQueue(Str)
+        {
+            Message = ParseMessage(Str);
+            if (Message.Command ~= "PRIVMSG")
+                i++;
+
+            if (i > ThrottleMaxMessageQueue)
+            {
+                for (i = ThrottleQueue.Length - 1; i >= 0; i--)
+                {
+                    Message = ParseMessage(ThrottleQueue[i]);
+                    if (Message.Command ~= "PRIVMSG")
+                        ThrottleQueue.Remove(i, 1);
+                }
+                ThrottleMessage();
+                break;
+            }
+        }
+    }
+
+    while (ThrottleQueue.Length > 0 && ThrottlePenalty < ThrottleMaxPenalty)
+    {
+        if (ThrottleQueue.Length > ThrottleMaxMessageQueue)
+        {
+            ThrottleQueue.Length = 0;
+            ThrottleMessage();
+            continue;
+        }
+        Message = ParseMessage(ThrottleQueue[0]);
+        if (Message.Command ~= "PRIVMSG")
+            ThrottlePenalty += ThrottleMessagePenalty;
+        else
+            ThrottlePenalty += ThrottleCommandPenalty;
+        SendText(ThrottleQueue[0]);
+        ThrottleQueue.Remove(0, 1);
+    }
+}
+
 function SendLine(string Line)
 {
     Log("Send: " $ Line, LL_Debug);
-    SendText(Line);
+    ThrottleQueue.AddItem(Line);
 }
 
 function IrcChannel AddChannel(string Channel)
@@ -590,22 +658,22 @@ const IrcPink = 13;
 const IrcGrey = 14;
 const IrcLtGrey = 15;
 
-function string IrcBold(string Text)
+function string IrcBold(coerce string Text)
 {
     return Chr(2) $ Text $ Chr(2);
 }
 
-function string IrcUnderline(string Text)
+function string IrcUnderline(coerce string Text)
 {
     return Chr(31) $ Text $ Chr(31);
 }
 
-function string IrcReverse(string Text)
+function string IrcReverse(coerce string Text)
 {
     return Chr(22) $ Text $ Chr(22);
 }
 
-function string IrcColor(string Text, byte ForeColor, optional byte BackColor = 255)
+function string IrcColor(coerce string Text, byte ForeColor, optional byte BackColor = 255)
 { // TODO: make it better
     return Chr(3) $ Right("0" $ ForeColor, 2) $ (BackColor == 255 ? "" : "," $ Right("0" $ BackColor, 2)) $
         Text $ Chr(3);
@@ -624,6 +692,12 @@ defaultproperties
     NickName="ut3irc"
     UserName="ut3irc"
     RealName="UT3 IRC"
+
+    bThrottleEnable=true
+    ThrottleCommandPenalty=1.0
+    ThrottleMessagePenalty=2.0
+    ThrottleMaxPenalty=10.0
+    ThrottleMaxMessageQueue=30
 
     VersionString="UT3 IrcLib - SVN $Rev$"
 }

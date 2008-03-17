@@ -26,9 +26,10 @@ function PostBeginPlay()
 
 function GetSeamlessTravelActorList(bool bToEntry, out array<Actor> ActorList)
 {
-    ActorList[ActorList.length] = self;
-    ActorList[ActorList.Length] = Reporter;
-    ActorList[ActorList.Length] = Reporter.ReporterSpectator;
+    ActorList.AddItem(self);
+    ActorList.AddItem(Reporter);
+    ActorList.AddItem(Reporter.ReporterSpectator);
+    ActorList.AddItem(Reporter.GameRules);
 
     if (NextMutator != None)
     {
