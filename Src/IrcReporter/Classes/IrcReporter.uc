@@ -104,7 +104,7 @@ function string GetTimestamp()
         {
             Str = FormatTime(WorldInfo.GRI.ElapsedTime);
         }
-        return "[" $ Str $ "] ";
+        return IrcColor("[" $ Str $ "]", IrcLtGrey) $ " ";
     }
     else
     {
@@ -356,6 +356,38 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
         if (Switch == 5)
             ReporterMessage("The match has begun!");
     }
+    if (ClassIsChildOf(Message, class'GameMessage'))
+    {
+        // TODO: make this work
+        if (!ShowMessage('Game'))
+            return;
+
+        switch (Switch)
+        {
+            case 1:
+                Str = PRI1Name @ "joined the game";
+                break;
+            case 2:
+                Str = FormatPlayerName(RelatedPRI_1, RelatedPRI_1.OldName)
+                    @ "changed name to" @ PRI1Name;
+                break;
+            case 3:
+                Str = PRI1Name @ "is now on the"
+                    @ FormatTeamName(TeamInfo(OptionalObject).TeamIndex);
+                break;
+            case 4:
+                Str = PRI1Name @ "left the game";
+                break;
+            case 14:
+                Str = PRI1Name @ "became a spectator";
+                break;
+            case 16:
+                Str = PRI1Name @ "joined as a spectator";
+                break;
+        }
+
+        ReporterMessage(Str $ ".");
+    }
     else if (ClassIsChildOf(Message, class'UTDeathMessage'))
     {
         if (!ShowMessage('Kill'))
@@ -385,6 +417,12 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
             ReporterMessage(PRI2Name @ "killed" @ (RelatedPRI_2.bIsFemale ? "herself" : "himself") $ Str);
         else
             ReporterMessage(PRI1Name @ "killed" @ PRI2Name $ Str);
+    }
+    else if (ClassIsChildOf(Message, class'UTFirstBloodMessage'))
+    {
+        if (!ShowMessage('FirstBlood'))
+            return;
+        ReporterMessage(PRI1Name @ "drew first blood!");
     }
     else if (ClassIsChildOf(Message, class'UTKillingSpreeMessage'))
     {
@@ -442,7 +480,7 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
                 Str @= "returned";
                 break;
             case 4:
-                Str @= "picked up";
+                Str @= "picked up by" @ PRI1Name;
                 break;
             case 5:
                 Str @= "returned";
@@ -475,6 +513,15 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
             ShowShortTeamScores();
         }
     }
+    else if (ClassIsChildOf(Message, class'UTTimerMessage'))
+    {
+        if (!ShowMessage('Overtime'))
+            return;
+        if (Switch == 17)
+        {
+            ReporterMessage("Overtime!");
+        }
+    }
     else if (ShowMessage('Misc'))
     {
         ReporterMessage(Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject));
@@ -484,40 +531,6 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
 function CheckGameStatus()
 {
     local name GameInfoState;
-
-/*
-    local int i;
-    local PlayerReplicationInfo PRI;
-
-    if (UTTeamGame(WorldInfo.Game) != none)
-    {
-        for (i = 0; i < 2; i++)
-        {
-            if (LastLeader == none ||
-                UTTeamGame(WorldInfo.Game).Teams[i].Score > TeamInfo(LastLeader).Score)
-            {
-                LastLeader = UTTeamGame(WorldInfo.Game).Teams[i];
-                ReporterMessage(FormatTeamName(i) @ "has taken the lead with"
-                    @ FormatTeamName(i, int(TeamInfo(LastLeader).Score)));
-                break;
-            }
-        }
-    }
-    else
-    {
-        WorldInfo.Game.GameReplicationInfo.SortPRIArray();
-        if (WorldInfo.Game.GameReplicationInfo.PRIArray.Length > 0)
-        {
-            PRI = WorldInfo.Game.GameReplicationInfo.PRIArray[0];
-            if (PRI != LastLeader && PRI.Score > PlayerReplicationInfo(LastLeader).Score)
-            {
-                LastLeader = PRI;
-                ReporterMessage(FormatPlayerName(PRI) @ "has taken the lead with"
-                    @ FormatPlayerName(PRI, int(PRI.Score)));
-            }
-        }
-    }
-*/
 
     GameInfoState = WorldInfo.Game.GetStateName();
     if (GameInfoState != LastGameInfoState)
@@ -640,5 +653,7 @@ defaultproperties
     CommandPrefix="!"
 
     GameRulesClass=class'UTGameRules_IrcReporter'
+
+    VersionString="UT3 IrcReporter - SVN $Rev$"
 }
 

@@ -444,20 +444,20 @@ function ReceivedCTCP(string Command, string Text, IrcMessage Message)
     if (Command ~= "CLIENTINFO")
     {
         if (Text == "")
-            Response = ":Supported tags: PING,VERSION,CLIENTINFO,ACTION - Use 'CLIENTINFO <tag>' for a description of each tag";
+            Response = "Supported tags: PING,VERSION,CLIENTINFO,ACTION - Use 'CLIENTINFO <tag>' for a description of each tag";
         else if (Text ~= "PING")
-            Response = ":PING: Returns given parameters without parsing them";
+            Response = "PING: Returns given parameters without parsing them";
         else if (Text ~= "VERSION")
-            Response = ":VERSION: Returns the version of this client";
+            Response = "VERSION: Returns the version of this client";
         else if (Text ~= "CLIENTINFO")
-            Response = ":CLIENTINFO: With no parameters, lists supported CTCP tags, 'CLIENTINFO <tag>' describes <tag>";
-        else if (Text ~= "TIME")
-            Response = ":TIME: Returns the current local time";
+            Response = "CLIENTINFO: With no parameters, lists supported CTCP tags, 'CLIENTINFO <tag>' describes <tag>";
+//        else if (Text ~= "TIME")
+//            Response = "TIME: Returns the current local time";
         else if (Text ~= "ACTION")
-            Response = ":ACTION: Used to describe actions, generates no reply";
+            Response = "ACTION: Used to describe actions, generates no reply";
         else
         {
-            Response = ":Unsupported tag" @ Command;
+            Response = "Unsupported tag" @ Command;
             Command = "ERRMSG";
         }
     }
@@ -674,7 +674,8 @@ function string IrcReverse(coerce string Text)
 }
 
 function string IrcColor(coerce string Text, byte ForeColor, optional byte BackColor = 255)
-{ // TODO: make it better
+{
+    // TODO: make it better
     return Chr(3) $ Right("0" $ ForeColor, 2) $ (BackColor == 255 ? "" : "," $ Right("0" $ BackColor, 2)) $
         Text $ Chr(3);
 }
