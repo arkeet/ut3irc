@@ -27,18 +27,33 @@ var IrcSpectator ReporterSpectator;
 var name LastGameInfoState;
 var Actor LastLeader;
 
-struct PlayerListEntry
+var string GameEndReason;
+
+struct PlayerInfo
 {
     var PlayerReplicationInfo PRI;
+    var Controller Controller;
     var string PlayerName;
-    var byte Team;
+    var TeamInfo Team;
+    var byte TeamIdx;
     var int Score;
+    var bool bSpectator;
 };
 
 struct PlayerList
 {
-    var array<PlayerListEntry> Entries;
+    var array<PlayerInfo> Entries;
 };
+
+var array<PlayerInfo> Players;
+
+struct MessageFilter
+{
+    var name MessageType;
+    var bool bShow;
+};
+
+var config array<MessageFilter> MessageTypes;
 
 simulated function PostBeginPlay()
 {
@@ -59,11 +74,13 @@ simulated function PostBeginPlay()
 simulated function Tick(float DeltaTime)
 {
     super.Tick(DeltaTime);
+    UpdatePlayers();
     CheckGameStatus();
 }
 
 event Destroyed()
 {
+    // Does this even happen?
     QUIT("Bye");
     ReporterSpectator.Destroy();
 }
@@ -153,7 +170,7 @@ function string StringRepeat(string Str, int Times)
     while (Times > 0)
     {
         Result $= Str;
-        Times--;
+        --Times;
     }
     return Result;
 }
@@ -196,7 +213,8 @@ function string FormatPlayerName(PlayerReplicationInfo PRI, optional coerce stri
 {
     if (Text == "")
         Text = PRI.GetPlayerAlias();
-    return IrcBold(IrcColor(Text, GetTeamIrcColor(PRI.GetTeamNum())));
+    return IrcBold(IrcColor(Text, GetTeamIrcColor(
+        PRI.Team == none ? byte(255) : PRI.GetTeamNum())));
 }
 
 function string FormatTeamName(int Team, optional coerce string Text)
@@ -252,7 +270,7 @@ function ShowTeamScores()
     if (UTTeamGame(WorldInfo.Game) != none)
     {
         Str = "Scores: [ ";
-        for (i = 0; i < 2; i++)
+        for (i = 0; i < 2; ++i)
         {
             Team = UTTeamGame(WorldInfo.Game).Teams[i];
             if (i > 0)
@@ -270,7 +288,7 @@ function ShowPlayerScores()
     local array<PlayerList> PlayerLists;
     local int i, j;
     local PlayerList L;
-    local PlayerListEntry Player;
+    local PlayerInfo Player;
     local int MaxPlayerListLen;
     local string Str;
 
@@ -284,15 +302,15 @@ function ShowPlayerScores()
 
         Player.PRI = PRI;
         Player.PlayerName = PRI.GetPlayerAlias();
-        Player.Team = WorldInfo.Game.bTeamGame ? PRI.GetTeamNum() : byte(255);
+        Player.TeamIdx = WorldInfo.Game.bTeamGame ? PRI.GetTeamNum() : byte(255);
         Player.Score = PRI.Score;
 
-        i = Player.Team >= 2 ? 0 : int(Player.Team);
+        i = Player.TeamIdx >= 2 ? 0 : int(Player.TeamIdx);
         PlayerLists[i].Entries.AddItem(Player);
         MaxPlayerListLen = Max(PlayerLists[i].Entries.Length, MaxPlayerListLen);
     }
 
-    for (i = 0; i < MaxPlayerListLen; i++)
+    for (i = 0; i < MaxPlayerListLen; ++i)
     {
         Str = "Scores: [ ";
         foreach PlayerLists(L, j)
@@ -302,7 +320,7 @@ function ShowPlayerScores()
             if (i < L.Entries.Length)
             {
                 Player = L.Entries[i];
-                Str $= FormatScoreListEntry(Player.PlayerName, Player.Score, Player.Team, ColWidth);
+                Str $= FormatScoreListEntry(Player.PlayerName, Player.Score, Player.TeamIdx, ColWidth);
             }
             else
             {
@@ -324,8 +342,15 @@ function TeamMessage(PlayerReplicationInfo PRI, coerce string S, name Type, opti
 
 function bool ShowMessage(name MessageType)
 {
-    // TODO
+    local MessageFilter F;
+
     Log("ShowMessage" @ MessageType, LL_Debug);
+
+    foreach MessageTypes(F)
+    {
+        if (F.MessageType == MessageType)
+            return F.bShow;
+    }
     return (MessageType != 'Misc');
 }
 
@@ -355,38 +380,6 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
 
         if (Switch == 5)
             ReporterMessage("The match has begun!");
-    }
-    if (ClassIsChildOf(Message, class'GameMessage'))
-    {
-        // TODO: make this work
-        if (!ShowMessage('Game'))
-            return;
-
-        switch (Switch)
-        {
-            case 1:
-                Str = PRI1Name @ "joined the game";
-                break;
-            case 2:
-                Str = FormatPlayerName(RelatedPRI_1, RelatedPRI_1.OldName)
-                    @ "changed name to" @ PRI1Name;
-                break;
-            case 3:
-                Str = PRI1Name @ "is now on the"
-                    @ FormatTeamName(TeamInfo(OptionalObject).TeamIndex);
-                break;
-            case 4:
-                Str = PRI1Name @ "left the game";
-                break;
-            case 14:
-                Str = PRI1Name @ "became a spectator";
-                break;
-            case 16:
-                Str = PRI1Name @ "joined as a spectator";
-                break;
-        }
-
-        ReporterMessage(Str $ ".");
     }
     else if (ClassIsChildOf(Message, class'UTDeathMessage'))
     {
@@ -528,6 +521,88 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
     }
 }
 
+function NotifyLogin(Controller Entering)
+{
+    local PlayerInfo Player;
+    local string Str;
+
+    if (Entering == none || Entering.PlayerReplicationInfo == none)
+        return;
+
+    if (Entering.PlayerReplicationInfo.bOnlySpectator)
+        Str = "connected as spectator.";
+    else
+        Str = "connected.";
+    if (ShowMessage('Connected'))
+        ReporterMessage(FormatPlayerName(Entering.PlayerReplicationInfo) @ Str);
+    Player.Controller = Entering;
+    Players.AddItem(Player);
+}
+
+function NotifyLogout(Controller Exiting)
+{
+    if (Exiting == none || Exiting.PlayerReplicationInfo == none)
+        return;
+    if (ShowMessage('Disconnected'))
+        ReporterMessage(FormatPlayerName(Exiting.PlayerReplicationInfo) @ "disconnected.");
+}
+
+function UpdatePlayers()
+{
+    local int i;
+
+    for (i = 0; i < Players.Length; ++i)
+    {
+        if (Players[i].Controller == none)
+        {
+            Players.Remove(i--, 1);
+            continue;
+        }
+
+        if (Players[i].PRI == none)
+        {
+            Players[i].PRI = Players[i].Controller.PlayerReplicationInfo;
+            Players[i].bSpectator = Players[i].PRI.bOnlySpectator;
+            Players[i].PlayerName = Players[i].PRI.GetPlayerAlias();
+            Players[i].Team = Players[i].PRI.Team;
+            Players[i].TeamIdx = Players[i].PRI.GetTeamNum();
+            Players[i].Score = int(Players[i].PRI.Score);
+        }
+
+        if (Players[i].PlayerName != Players[i].PRI.GetPlayerAlias())
+        {
+            if (ShowMessage('NameChange'))
+                ReporterMessage(FormatPlayerName(Players[i].PRI, Players[i].PlayerName) @
+                    "changed name to" @ FormatPlayerName(Players[i].PRI));
+            Players[i].PlayerName = Players[i].PRI.GetPlayerAlias();
+        }
+
+        if (Players[i].bSpectator != Players[i].PRI.bOnlySpectator ||
+            Players[i].Team != Players[i].PRI.Team)
+        {
+            Players[i].bSpectator = Players[i].PRI.bOnlySpectator;
+            Players[i].Team = Players[i].PRI.Team;
+            Players[i].TeamIdx = Players[i].PRI.GetTeamNum();
+            if (ShowMessage('TeamChange'))
+            {
+                if (Players[i].bSpectator)
+                {
+                    ReporterMessage(FormatPlayerName(Players[i].PRI) @ "became a spectator.");
+                }
+                else if (Players[i].Team != none)
+                {
+                    ReporterMessage(FormatPlayerName(Players[i].PRI) @ "joined the" @
+                        FormatTeamName(Players[i].TeamIdx) $ ".");
+                }
+                else
+                {
+                    ReporterMessage(FormatPlayerName(Players[i].PRI) @ "joined the game.");
+                }
+            }
+        }
+    }
+}
+
 function CheckGameStatus()
 {
     local name GameInfoState;
@@ -539,14 +614,20 @@ function CheckGameStatus()
         switch(GameInfoState)
         {
             case 'PendingMatch':
+                if (!ShowMessage('GameStatus'))
+                    break;
                 AnnounceCurrentGame();
                 break;
             case 'MatchOver':
+                if (!ShowMessage('MatchOver'))
+                    break;
                 ReporterMessage("Match has ended.");
                 ShowTeamScores();
                 ShowPlayerScores();
                 break;
             case 'RoundOver':
+                if (!ShowMessage('RoundOver'))
+                    break;
                 ReporterMessage("Round has ended.");
                 ShowTeamScores();
                 ShowPlayerScores();

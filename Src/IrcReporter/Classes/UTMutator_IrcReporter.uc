@@ -37,6 +37,24 @@ function GetSeamlessTravelActorList(bool bToEntry, out array<Actor> ActorList)
     }
 }
 
+function NotifyLogin(Controller Entering)
+{
+    super.NotifyLogin(Entering);
+    if (Reporter != none)
+    {
+        Reporter.NotifyLogin(Entering);
+    }
+}
+
+function NotifyLogout(Controller Exiting)
+{
+    super.NotifyLogout(Exiting);
+    if (Reporter != none)
+    {
+        Reporter.NotifyLogout(Exiting);
+    }
+}
+
 defaultproperties
 {
 }
