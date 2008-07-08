@@ -175,20 +175,39 @@ function string StringRepeat(string Str, int Times)
     return Result;
 }
 
-function string GetTeamName(byte Team)
+function string GetTeamName(byte Team, optional bool bShort)
 {
-    switch (Team)
+    if (bShort)
     {
-        case 0:
-            return "Red Team";
-        case 1:
-            return "Blue Team";
-        case 2:
-            return "Green Team";
-        case 3:
-            return "Gold Team";
-        default:
-            return "No Team";
+        switch (Team)
+        {
+            case 0:
+                return "Red";
+            case 1:
+                return "Blue";
+            case 2:
+                return "Green";
+            case 3:
+                return "Gold";
+            default:
+                return "";
+        }
+    }
+    else
+    {
+        switch (Team)
+        {
+            case 0:
+                return "Red Team";
+            case 1:
+                return "Blue Team";
+            case 2:
+                return "Green Team";
+            case 3:
+                return "Gold Team";
+            default:
+                return "No Team";
+        }
     }
 }
 
@@ -217,10 +236,10 @@ function string FormatPlayerName(PlayerReplicationInfo PRI, optional coerce stri
         PRI.Team == none ? byte(255) : PRI.GetTeamNum())));
 }
 
-function string FormatTeamName(int Team, optional coerce string Text)
+function string FormatTeamName(int Team, optional coerce string Text, optional bool bShort)
 {
     if (Text == "")
-        Text = GetTeamName(byte(Team));
+        Text = GetTeamName(byte(Team), bShort);
     return IrcBold(IrcColor(Text, GetTeamIrcColor(byte(Team))));
 }
 
@@ -513,6 +532,83 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
         if (Switch == 17)
         {
             ReporterMessage("Overtime!");
+        }
+    }
+    // TODO: better onslaught support
+    else if (ClassIsChildOf(Message, class'UTOnslaughtMessage'))
+    {
+        if (!ShowMessage('Onslaught'))
+            return;
+
+        Str = UTGameObjective(OptionalObject).ObjectiveName @ "node";
+
+        switch (Switch)
+        {
+            case 0:
+            case 1:
+                ReporterMessage(FormatTeamName(Switch - 0,, true) @ "wins the round!");
+                break;
+            case 2:
+            case 3:
+                ReporterMessage(FormatTeamName(Switch - 2,, true) @ "power node constructed.");
+                break;
+            case 4:
+                ReporterMessage("Draw - both cores drained!");
+                break;
+            case 9:
+            case 10:
+//                ReporterMessage(FormatTeamName(Switch - 9,, true) @ "Prime Node under attack!");
+                break;
+            case 11:
+                ReporterMessage("2 points for regulation win.");
+                break;
+            case 12:
+                ReporterMessage("1 point for overtime win.");
+                break;
+            case 16:
+            case 17:
+                ReporterMessage(FormatTeamName(Switch - 2,, true) @ "power node destroyed.");
+                break;
+            case 23:
+            case 24:
+                ReporterMessage(FormatTeamName(Switch - 23,, true) @ "power node under construction.");
+                break;
+            case 27:
+            case 28:
+                ReporterMessage(FormatTeamName(Switch - 27,, true) @ "power node isolated!");
+                break;
+        }
+    }
+    else if (ClassIsChildOf(Message, class'UTOnslaughtBlueCoreMessage'))
+    {
+        if (!ShowMessage('OnslaughtCore'))
+            return;
+
+        if (ClassIsChildOf(Message, class'UTOnslaughtRedCoreMessage'))
+            Str = FormatTeamName(0, "Red core");
+        else
+            Str = FormatTeamName(1, "Blue core");
+
+        switch (Switch)
+        {
+            case 0:
+//                ReporterMessage(Str @ "is under attack!");
+                break;
+            case 1:
+                ReporterMessage(Str @ "destroyed!");
+                break;
+            case 2:
+                ReporterMessage(Str @ "is critical!");
+                break;
+            case 3:
+                ReporterMessage(Str @ "is vulnerable!");
+                break;
+            case 4:
+                ReporterMessage(Str @ "is heavily damaged!");
+                break;
+            case 6:
+                ReporterMessage(Str @ "is secure!");
+                break;
         }
     }
     else if (ShowMessage('Misc'))
