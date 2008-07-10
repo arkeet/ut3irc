@@ -129,38 +129,31 @@ function string GetTimestamp()
     }
 }
 
-function ReporterMessage(string Text, optional bool bNoTimestamp)
+function ChannelMessage(string Channel, string Text, optional bool bTimestamp = true)
 {
     local IrcChannel C;
 
-    C = GetChannel(ReporterChannel);
+    C = GetChannel(Channel);
     if (C != none)
     {
-        if (!bNoTimestamp)
+        if (bTimestamp)
             Text = GetTimestamp() $ Text;
         C.SendMessage(Text);
     }
     else
     {
-        Log("Tried to send a reporter message while not in the channel!", LL_Warning);
+        Log("Tried to send a message to" @ Channel @ "while not in the channel!", LL_Warning);
     }
 }
 
-function ChatChannelMessage(string Text, optional bool bNoTimestamp)
+function ReporterMessage(string Text, optional bool bTimestamp = true)
 {
-    local IrcChannel C;
+    ChannelMessage(ReporterChannel, Text, bTimestamp);
+}
 
-    C = GetChannel(RealChatChannel);
-    if (C != none)
-    {
-        if (!bNoTimestamp)
-            Text = GetTimestamp() $ Text;
-        C.SendMessage(Text);
-    }
-    else
-    {
-        Log("Tried to send a chat message while not in the channel!", LL_Warning);
-    }
+function ChatChannelMessage(string Text, optional bool bTimestamp = true)
+{
+    ChannelMessage(RealChatChannel, Text, bTimestamp);
 }
 
 function string StringRepeat(string Str, int Times)
@@ -355,7 +348,7 @@ function TeamMessage(PlayerReplicationInfo PRI, coerce string S, name Type, opti
 {
     if (bEnableChat && Type == 'Say')
     {
-        ChatChannelMessage(FormatPlayerName(PRI, PRI.GetPlayerAlias() $ ":") @ S);
+        ChatChannelMessage(FormatPlayerName(PRI, PRI.GetPlayerAlias() $ ":") @ S, false);
     }
 }
 

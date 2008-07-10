@@ -80,6 +80,11 @@ simulated function PostBeginPlay()
     RegisterHandler(IrcClient_Handler_KICK, "KICK");
     RegisterHandler(IrcClient_Handler_353, "353");
     RegisterHandler(IrcClient_Handler_366, "366");
+    RegisterHandler(IrcClient_Handler_324, "324");
+    RegisterHandler(IrcClient_Handler_MODE, "MODE");
+    RegisterHandler(IrcClient_Handler_331, "331");
+    RegisterHandler(IrcClient_Handler_332, "332");
+    RegisterHandler(IrcClient_Handler_TOPIC, "TOPIC");
 
     // CTCP
     RegisterHandler(IrcClient_CTCPHandler, "PRIVMSG");
@@ -169,7 +174,7 @@ static function bool MatchString(string Pattern, string Str, optional bool bCase
         if (Mid(Pattern, i, 1) == "*")
         {
             do
-                i++;
+                ++i;
             until (Mid(Pattern, i, 1) != "*");
 
             if (Len(Pattern) <= i)
@@ -179,7 +184,7 @@ static function bool MatchString(string Pattern, string Str, optional bool bCase
             {
                 if (MatchString(Mid(Pattern, i), Mid(Str, j)))
                     return true;
-                j++;
+                ++j;
             }
 
             return false;
@@ -197,12 +202,12 @@ static function bool MatchString(string Pattern, string Str, optional bool bCase
                     return false;
             }
         }
-        i++;
-        j++;
+        ++i;
+        ++j;
     }
 
     while (Mid(Pattern, i, 1) == "*")
-        i++;
+        ++i;
 
     return Len(Pattern) <= i;
 }
@@ -222,7 +227,7 @@ static function Split2(string Separator, string Str, out string LeftPart, out st
     {
         LeftPart = Left(Str, Pos);
         while (Mid(Str, Pos, 1) == Separator)
-            Pos++;
+            ++Pos;
         RightPart = Mid(Str, Pos);
     }
 }
@@ -240,7 +245,7 @@ function IrcMessage ParseMessage(coerce string Message)
 
     Split2(" ", Message, Result.Command, Message);
 
-    for (i = 0; Len(Message) > 0; i++)
+    for (i = 0; Len(Message) > 0; ++i)
     {
         if (Left(Message, 1) == ":")
         {
@@ -336,11 +341,11 @@ simulated function Tick(float DeltaTime)
         {
             Message = ParseMessage(Str);
             if (Message.Command ~= "PRIVMSG")
-                i++;
+                ++i;
 
             if (i > ThrottleMaxMessageQueue)
             {
-                for (i = ThrottleQueue.Length - 1; i >= 0; i--)
+                for (i = ThrottleQueue.Length - 1; i >= 0; --i)
                 {
                     Message = ParseMessage(ThrottleQueue[i]);
                     if (Message.Command ~= "PRIVMSG")
@@ -546,6 +551,51 @@ function IrcClient_Handler_366(IrcMessage Message) // RPL_ENDOFNAMES
     NamesReplyUsers = "";
 }
 
+function IrcClient_Handler_324(IrcMessage Message) // RPL_CHANNELMODES
+{
+    local IrcChannel C;
+
+    C = GetChannel(Message.Params[1]);
+    if (C != none)
+        C.ParseMode(Message.Params, 2);
+}
+
+function IrcClient_Handler_MODE(IrcMessage Message)
+{
+    local IrcChannel C;
+
+    C = GetChannel(Message.Params[0]);
+    if (C != none)
+        C.ParseMode(Message.Params, 1);
+}
+
+function IrcClient_Handler_331(IrcMessage Message) // RPL_NOTOPIC
+{
+    local IrcChannel C;
+
+    C = GetChannel(Message.Params[0]);
+    if (C != none)
+        C.Topic = "";
+}
+
+function IrcClient_Handler_332(IrcMessage Message) // RPL_TOPIC
+{
+    local IrcChannel C;
+
+    C = GetChannel(Message.Params[0]);
+    if (C != none)
+        C.Topic = Message.Params[1];
+}
+
+function IrcClient_Handler_TOPIC(IrcMessage Message)
+{
+    local IrcChannel C;
+
+    C = GetChannel(Message.Params[0]);
+    if (C != none)
+        C.Topic = Message.Params[1];
+}
+
 function IrcClient_CTCPHandler(IrcMessage Message)
 {
     local string Command, Text;
@@ -586,7 +636,7 @@ function USER(string user, string host, string server, string real)
 
 function JOIN(string chans, optional string keys)
 {
-    SendLine("JOIN" @ chans $ (Len(keys) > 0 ? " " $ keys : ""));
+    SendLine("JOIN" @ chans $ (keys == "" ? "" : " " $ keys));
 }
 
 function PART(string chans)
@@ -594,14 +644,14 @@ function PART(string chans)
     SendLine("PART" @ chans);
 }
 
-function MODE(string target, string mode)
+function MODE(string target, optional string mode)
 {
     SendLine("MODE" @ target @ mode);
 }
 
 function TOPIC(string chan, optional string newtopic)
 {
-    SendLine("TOPIC" @ chan $ (Len(newtopic) > 0 ? " " $ newtopic : ""));
+    SendLine("TOPIC" @ chan $ (newtopic == "" ? "" : " :" $ newtopic));
 }
 
 function INVITE(string nick, string chan)
@@ -611,7 +661,7 @@ function INVITE(string nick, string chan)
 
 function KICK(string chan, string user, optional string comment)
 {
-    SendLine("KICK" @ chan @ user $ (Len(comment) > 0 ? " :" $ comment : ""));
+    SendLine("KICK" @ chan @ user $ (comment == "" ? "" : " :" $ comment));
 }
 
 function PRIVMSG(string target, string text)
@@ -626,7 +676,7 @@ function NOTICE(string target, string text)
 
 function QUIT(optional string message)
 {
-    SendLine("QUIT" $ (Len(message) > 0 ? " :" $ message : ""));
+    SendLine("QUIT" $ (message == "" ? "" : " :" $ message));
 }
 
 function CTCPRequest(string target, string text)
@@ -683,6 +733,35 @@ function string IrcColor(coerce string Text, byte ForeColor, optional byte BackC
 function string IrcResetFormat()
 {
     return Chr(15);
+}
+
+function string StripFormat(string Text)
+{
+    // I wish we had regular expressions
+    local int i;
+    local string Char, Result;
+
+    for (i = 0; i < Len(Text); ++i)
+    {
+        Char = Mid(Text, i, 1);
+        if (Asc(Char) >= 32)
+        {
+            Result $= Char;
+        }
+        else if (Asc(Char) == 3) // color code
+        {
+            // strip the folling digits as well
+            Char = Mid(Text, i + 1, 1);
+            if (Char < "0" || Char > "9")
+                continue;
+            Char = Mid(Text, ++i + 1, 1);
+            if (Char < "0" || Char > "9")
+                continue;
+            ++i;
+        }
+    }
+
+    return Result;
 }
 
 defaultproperties
