@@ -89,6 +89,8 @@ function Registered()
 {
     local string Cmd;
 
+    super.Registered();
+
     foreach ConnectCommands(Cmd)
     {
         Cmd = Repl(Cmd, "%n", CurrentNick);

@@ -4,18 +4,16 @@
 class IrcChannel extends Object
     dependson(IrcClient);
 
-var string UserModeChars;
-
 struct ChannelUser
 {
     var string Nick;
-    var string Mode;
+    var string Prefix;
 };
 
 struct ChannelMode
 {
     var string ModeChar;
-    var string Argument;
+    var string Parameter;
 };
 
 var IrcClient Irc;
@@ -25,17 +23,57 @@ var string Topic;
 var array<ChannelMode> Modes;
 var array<ChannelUser> Users;
 
-function bool ModeCharHasArgument(string ModeChar)
+function NickChange(string OldNick, string NewNick)
 {
-    // TODO: is this all we need?
-    return (InStr("vholkb", ModeChar) != -1);
+    local ChannelUser U;
+    local int i;
+
+    foreach Users(U, i)
+    {
+        if (U.Nick == OldNick)
+            Users[i].Nick = NewNick;
+    }
+}
+
+function bool IsUserMode(string ModeChar, optional out string PrefixChar)
+{
+    local int Pos;
+
+    Pos = InStr(Irc.UserModes, ModeChar);
+    if (Pos == -1)
+        return false;
+    PrefixChar = Mid(Irc.UserModes, Pos, 1);
+    return true;
+}
+
+function bool HasParameter(string ModeChar, bool bIsSet)
+{
+    if (IsUserMode(ModeChar))
+        return true;
+    if (bIsSet)
+        return (InStr(Irc.ChanModesA $ Irc.ChanModesB $ Irc.ChanModesC, ModeChar) != -1);
+    else
+        return (InStr(Irc.ChanModesA $ Irc.ChanModesB, ModeChar) != -1);
+}
+
+function string SortPrefix(string Prefix)
+{
+    local string PrefixChar, Result;
+    local int i;
+
+    for (i = 0; i < Len(Irc.UserModePrefixes); i++)
+    {
+        PrefixChar = Mid(Irc.UserModePrefixes, i, 1);
+        if (InStr(Prefix, PrefixChar) != -1)
+            Result $= PrefixChar;
+    }
+    return Result;
 }
 
 function ParseMode(array<string> Params, int ModeOffset)
 {
-    // TODO: handle modes with arguments, including user op/voice/etc modes
-
-    local string ModeString, ModeChar;
+    local string ModeString, ModeChar, PrefixChar, Parameter;
+    local ChannelUser User;
     local ChannelMode Mode, NewMode;
     local bool bModeOn, bFound;
     local int i, j;
@@ -49,13 +87,29 @@ function ParseMode(array<string> Params, int ModeOffset)
         {
             bModeOn = (ModeChar == "+");
         }
+        else if (IsUserMode(ModeChar, PrefixChar))
+        {
+            Parameter = Params[++ModeOffset];
+            foreach Users(User)
+            {
+                if (User.Nick ~= Parameter)
+                {
+                    User.Prefix = SortPrefix(User.Prefix $ PrefixChar);
+                    break;
+                }
+            }
+        }
         else
         {
             NewMode.ModeChar = ModeChar;
-            if (ModeCharHasArgument(ModeChar))
-                NewMode.Argument = Params[++ModeOffset];
+            if (HasParameter(ModeChar, bModeOn))
+                Parameter = Params[++ModeOffset];
             else
-                NewMode.Argument = "";
+                Parameter = "";
+            NewMode.Parameter = Parameter;
+
+            Irc.Log(Channel @ "setting mode " $ (bModeOn ? "+" : "-") $
+                ModeChar @ Parameter, LL_Debug);
 
             bFound = false;
             foreach Modes(Mode, j)
@@ -76,7 +130,7 @@ function ParseMode(array<string> Params, int ModeOffset)
     }
 }
 
-function bool HasMode(string ModeChar, optional out string Argument)
+function bool HasMode(string ModeChar, optional out string Parameter)
 {
     local ChannelMode Mode;
 
@@ -84,7 +138,7 @@ function bool HasMode(string ModeChar, optional out string Argument)
     {
         if (Mode.ModeChar == ModeChar)
         {
-            Argument = Mode.Argument;
+            Parameter = Mode.Parameter;
             return true;
         }
     }
@@ -102,12 +156,13 @@ function ProcessUserList(string UserList)
     while (Len(UserList) > 0)
     {
         Irc.Split2(" ", UserList, User, UserList);
-        for (U.Mode = ""; Len(User) > 0 && InStr(UserModeChars, Left(User, 1)) >= 0; User = Mid(User, 1))
+        for (U.Prefix = ""; Len(User) > 0 && InStr(Irc.UserModePrefixes, Left(User, 1)) >= 0; User = Mid(User, 1))
         {
-            U.Mode $= Left(User, 1);
+            U.Prefix $= Left(User, 1);
         }
+        U.Prefix = SortPrefix(U.Prefix);
         U.Nick = User;
-        Irc.Log("- " $ "(" $ (U.Mode == "" ? " " : U.Mode) $ ")" $ U.Nick, LL_Debug);
+        Irc.Log(" - " $ U.Prefix $ U.Nick, LL_Debug);
     }
     Irc.Log("End user list", LL_Debug);
 }
@@ -121,5 +176,4 @@ function SendMessage(string Text)
 
 defaultproperties
 {
-    UserModeChars="~&@%+"
 }

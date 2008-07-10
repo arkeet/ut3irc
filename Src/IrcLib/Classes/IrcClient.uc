@@ -35,6 +35,12 @@ enum EIrcState
 };
 var EIrcState IrcState;
 
+var string UserModes, UserModePrefixes;
+var string ChanTypes;
+var string ChanModesA, ChanModesB, ChanModesC, ChanModesD;
+var int MaxModes, MaxChannels, MaxNickLength, MaxTopicLength;
+var string NetworkName;
+
 var int DefaultPort;
 
 var string ServerHost;
@@ -74,6 +80,7 @@ simulated function PostBeginPlay()
     RegisterHandler(IrcClient_Handler_PING, "PING");
     RegisterHandler(IrcClient_Handler_433, "433");
     RegisterHandler(IrcClient_Handler_001, "001");
+    RegisterHandler(IrcClient_Handler_005, "005");
     RegisterHandler(IrcClient_Handler_NICK, "NICK");
     RegisterHandler(IrcClient_Handler_JOIN, "JOIN");
     RegisterHandler(IrcClient_Handler_PART, "PART");
@@ -145,6 +152,7 @@ event Opened()
 {
     Log("Connected", LL_Notice);
     IrcState = IRCS_Connected;
+    NetworkName = ServerHost $ ":" $ ServerAddr.Port;
 
     USER(UserName, "*", "*", RealName);
     NICK(NickName);
@@ -477,6 +485,8 @@ function ReceivedCTCP(string Command, string Text, IrcMessage Message)
 
 function Registered()
 {
+    IrcState = IRCS_Registered;
+
     // Use this function to perform actions when we have connected
 }
 
@@ -488,8 +498,78 @@ function IrcClient_Handler_PING(IrcMessage Message)
     SendMessage(Message);
 }
 
-function IrcClient_Handler_001(IrcMessage Message) // this happens when we're registered
+function IrcClient_Handler_001(IrcMessage Message) // RPL_WELCOME
 {
+    if (IrcState < IRCS_Registered)
+    {
+        CurrentNick = Message.Params[0];
+
+        // react to any 005 features such as NAMESX before doing stuff such as joining
+        SetTimer(1.0, false, 'Registered');
+    }
+}
+
+function IrcClient_Handler_005(IrcMessage Message) // RPL_ISUPPORT
+{
+    local string Key, Val;
+    local int i;
+
+    for (i = 1; i < Message.Params.Length - 1; ++i)
+    {
+        Split2("=", Message.Params[i], Key, Val);
+
+        if (Key == "PREFIX")
+        {
+            Split2(")", Mid(Val, 1), UserModes, UserModePrefixes);
+            Log("This server supports channel user modes:" @
+                UserModes @ UserModePrefixes, LL_Debug);
+        }
+        else if (Key == "CHANTYPES")
+        {
+            ChanTypes = Val;
+            Log("This server supports channel types:" @ ChanTypes, LL_Debug);
+        }
+        else if (Key == "CHANMODES")
+        {
+            Split2(",", Val, ChanModesA, Val);
+            Split2(",", Val, ChanModesB, Val);
+            Split2(",", Val, ChanModesC, Val);
+            Split2(",", Val, ChanModesD, Val);
+            Log("This server supports channel modes:" @
+                ChanModesA @ ChanModesB @ ChanModesC @ ChanModesD, LL_Debug);
+        }
+        else if (Key == "MODES")
+        {
+            MaxModes = int(Val);
+            Log("This server supports" @ MaxModes @ "mode changes at once", LL_Debug);
+        }
+        else if (Key == "MAXCHANNELS")
+        {
+            MaxChannels = int(Val);
+            Log("This server's channel limit is" @ MaxChannels, LL_Debug);
+        }
+        else if (Key == "NICKLEN")
+        {
+            MaxNickLength = int(Val);
+            Log("This server's nick length limit is" @ MaxNickLength, LL_Debug);
+        }
+        else if (Key == "TOPICLEN")
+        {
+            MaxTopicLength = int(Val);
+            Log("This server's topic length limit is" @ MaxTopicLength, LL_Debug);
+        }
+        else if (Key == "NETWORK")
+        {
+            NetworkName = Val;
+            Log("This server's network name is" @ NetworkName, LL_Debug);
+        }
+        else if (Key == "NAMESX")
+        {
+            SendLine("PROTOCTL NAMESX");
+            Log("This server supports NAMESX", LL_Debug);
+        }
+    }
+
     if (IrcState < IRCS_Registered)
     {
         CurrentNick = Message.Params[0];
@@ -512,10 +592,16 @@ function IrcClient_Handler_433(IrcMessage Message) // ERR_NICKNAMEINUSE
 
 function IrcClient_Handler_NICK(IrcMessage Message) // RPL_ENDOFMOTD
 {
-    if (ParseHostmask(Message.Prefix).Nick == CurrentNick)
-    {
-        CurrentNick = Message.Params[0];
-    }
+    local string OldNick, NewNick;
+    local IrcChannel C;
+
+    OldNick = ParseHostmask(Message.Prefix).Nick;
+    NewNick = Message.Params[0];
+
+    if (OldNick == CurrentNick)
+        CurrentNick = NewNick;
+    foreach Channels(C)
+        C.NickChange(OldNick, NewNick);
 }
 
 function IrcClient_Handler_JOIN(IrcMessage Message)
@@ -780,5 +866,16 @@ defaultproperties
     ThrottleMaxMessageQueue=30
 
     VersionString="UT3 IrcLib - SVN $Rev$"
+
+    UserModes="vo"
+    UserModePrefixes="+@"
+    ChanTypes="#"
+    ChanModesA="b"
+    ChanModesB="k"
+    ChanModesC="l"
+    ChanModesD="imnpst"
+    MaxModes=3
+    MaxNickLength=9
+    MaxTopicLength=80
 }
 
