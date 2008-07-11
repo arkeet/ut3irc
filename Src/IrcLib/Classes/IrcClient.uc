@@ -324,7 +324,7 @@ event ReceivedLine(string Line)
     ReceivedMessage(ParseMessage(Line));
 }
 
-function ThrottleMessage();
+function ThrottleDropEvent();
 
 simulated function Tick(float DeltaTime)
 {
@@ -359,7 +359,7 @@ simulated function Tick(float DeltaTime)
                     if (Message.Command ~= "PRIVMSG")
                         ThrottleQueue.Remove(i, 1);
                 }
-                ThrottleMessage();
+                ThrottleDropEvent();
                 break;
             }
         }
@@ -370,7 +370,7 @@ simulated function Tick(float DeltaTime)
         if (ThrottleQueue.Length > ThrottleMaxMessageQueue)
         {
             ThrottleQueue.Length = 0;
-            ThrottleMessage();
+            ThrottleDropEvent();
             continue;
         }
         Message = ParseMessage(ThrottleQueue[0]);

@@ -368,7 +368,7 @@ function bool ShowMessage(name MessageType)
     return (MessageType != 'Misc');
 }
 
-function ThrottleMessage()
+function ThrottleDropEvent()
 {
     ReporterMessage("I had to drop some messages to catch up.");
     if (!(RealChatChannel ~= ReporterChannel))
