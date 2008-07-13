@@ -34,10 +34,8 @@ struct PlayerInfo
     var PlayerReplicationInfo PRI;
     var Controller Controller;
     var string PlayerName;
-    var TeamInfo Team;
-    var byte TeamIdx;
+    var int Team;
     var int Score;
-    var bool bSpectator;
 };
 
 struct PlayerList
@@ -170,7 +168,16 @@ function string StringRepeat(string Str, int Times)
     return Result;
 }
 
-function string GetTeamName(byte Team, optional bool bShort)
+function int GetTeamIdx(PlayerReplicationInfo PRI)
+{
+    if (PRI.bOnlySpectator)
+        return -2;
+    if (PRI.Team != none)
+        return PRI.GetTeamNum();
+    return -1;
+}
+
+function string GetTeamName(int Team, optional bool bShort)
 {
     if (bShort)
     {
@@ -184,8 +191,6 @@ function string GetTeamName(byte Team, optional bool bShort)
                 return "Green";
             case 3:
                 return "Gold";
-            default:
-                return "";
         }
     }
     else
@@ -200,13 +205,16 @@ function string GetTeamName(byte Team, optional bool bShort)
                 return "Green Team";
             case 3:
                 return "Gold Team";
-            default:
+            case -1:
                 return "No Team";
+            case -2:
+                return "Spectators";
         }
     }
+    return "";
 }
 
-function byte GetTeamIrcColor(byte Team)
+function int GetTeamIrcColor(int Team)
 {
     switch (Team)
     {
@@ -218,27 +226,31 @@ function byte GetTeamIrcColor(byte Team)
             return IrcGreen;
         case 3:
             return IrcOrange;
-        default:
+        case -1:
             return IrcGreen;
+        case -2:
+            return IrcPurple;
+        default:
+            return IrcBlack;
     }
 }
 
-function string FormatPlayerName(PlayerReplicationInfo PRI, optional coerce string Text)
+function string FormatPlayerName(PlayerReplicationInfo PRI, optional coerce string Text, optional int TeamIdx = 255)
 {
     if (Text == "")
         Text = PRI.GetPlayerAlias();
     return IrcBold(IrcColor(Text, GetTeamIrcColor(
-        PRI.Team == none ? byte(255) : PRI.GetTeamNum())));
+        TeamIdx == 255 ? GetTeamIdx(PRI) : TeamIdx)));
 }
 
 function string FormatTeamName(int Team, optional coerce string Text, optional bool bShort)
 {
     if (Text == "")
-        Text = GetTeamName(byte(Team), bShort);
-    return IrcBold(IrcColor(Text, GetTeamIrcColor(byte(Team))));
+        Text = GetTeamName(Team, bShort);
+    return IrcBold(IrcColor(Text, GetTeamIrcColor(Team)));
 }
 
-function string FormatScoreListEntry(string ScoreName, int Score, byte Team, int Width)
+function string FormatScoreListEntry(string ScoreName, int Score, int Team, int Width)
 {
     local string LeftPart, RightPart, Ret;
 
@@ -298,6 +310,7 @@ function ShowTeamScores()
 
 function ShowPlayerScores()
 {
+    local array<PlayerReplicationInfo> PRIArray;
     local PlayerReplicationInfo PRI;
     local array<PlayerList> PlayerLists;
     local int i, j;
@@ -306,20 +319,28 @@ function ShowPlayerScores()
     local int MaxPlayerListLen;
     local string Str;
 
-    PlayerLists.Length = WorldInfo.Game.bTeamGame ? 2 : 1;
     MaxPlayerListLen = 0;
 
-    foreach WorldInfo.GRI.PRIArray(PRI)
+    WorldInfo.GRI.SortPRIArray();
+    WorldInfo.GRI.GetPRIArray(PRIArray);
+    foreach PRIArray(PRI)
     {
         if (PRI.bOnlySpectator)
             continue;
 
         Player.PRI = PRI;
         Player.PlayerName = PRI.GetPlayerAlias();
-        Player.TeamIdx = WorldInfo.Game.bTeamGame ? PRI.GetTeamNum() : byte(255);
-        Player.Score = PRI.Score;
+        Player.Team = GetTeamIdx(PRI);
+        Player.Score = int(PRI.Score);
 
-        i = Player.TeamIdx >= 2 ? 0 : int(Player.TeamIdx);
+        i = Player.Team;
+        if (i < -1)
+            continue;
+        if (i == -1)
+            i = 0;
+        if (PlayerLists.Length <= i + 1)
+            PlayerLists.Length = i + 1;
+
         PlayerLists[i].Entries.AddItem(Player);
         MaxPlayerListLen = Max(PlayerLists[i].Entries.Length, MaxPlayerListLen);
     }
@@ -334,7 +355,7 @@ function ShowPlayerScores()
             if (i < L.Entries.Length)
             {
                 Player = L.Entries[i];
-                Str $= FormatScoreListEntry(Player.PlayerName, Player.Score, Player.TeamIdx, ColWidth);
+                Str $= FormatScoreListEntry(Player.PlayerName, Player.Score, Player.Team, ColWidth);
             }
             else
             {
@@ -614,11 +635,17 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
 
 function NotifyLogin(Controller Entering)
 {
-    local PlayerInfo Player;
+    local PlayerInfo Player, P;
     local string Str;
 
     if (Entering == none || Entering.PlayerReplicationInfo == none)
         return;
+
+    foreach Players(P)
+    {
+        if (P.Controller == Entering)
+            return;
+    }
 
     if (Entering.PlayerReplicationInfo.bOnlySpectator)
         Str = "connected as spectator.";
@@ -641,6 +668,8 @@ function NotifyLogout(Controller Exiting)
 function UpdatePlayers()
 {
     local int i;
+    local int OldTeam;
+    local string Str;
 
     for (i = 0; i < Players.Length; ++i)
     {
@@ -653,41 +682,40 @@ function UpdatePlayers()
         if (Players[i].PRI == none)
         {
             Players[i].PRI = Players[i].Controller.PlayerReplicationInfo;
-            Players[i].bSpectator = Players[i].PRI.bOnlySpectator;
             Players[i].PlayerName = Players[i].PRI.GetPlayerAlias();
-            Players[i].Team = Players[i].PRI.Team;
-            Players[i].TeamIdx = Players[i].PRI.GetTeamNum();
+            Players[i].Team = GetTeamIdx(Players[i].PRI);
             Players[i].Score = int(Players[i].PRI.Score);
         }
 
         if (Players[i].PlayerName != Players[i].PRI.GetPlayerAlias())
         {
             if (ShowMessage('NameChange'))
+            {
                 ReporterMessage(FormatPlayerName(Players[i].PRI, Players[i].PlayerName) @
                     "changed name to" @ FormatPlayerName(Players[i].PRI));
+            }
             Players[i].PlayerName = Players[i].PRI.GetPlayerAlias();
         }
 
-        if (Players[i].bSpectator != Players[i].PRI.bOnlySpectator ||
-            Players[i].Team != Players[i].PRI.Team)
+        if (Players[i].Team != GetTeamIdx(Players[i].PRI))
         {
-            Players[i].bSpectator = Players[i].PRI.bOnlySpectator;
-            Players[i].Team = Players[i].PRI.Team;
-            Players[i].TeamIdx = Players[i].PRI.GetTeamNum();
+            OldTeam = Players[i].Team;
+            Players[i].Team = GetTeamIdx(Players[i].PRI);
+            Log(Players[i].PlayerName @ "team change from" @ OldTeam @ "to" @ Players[i].Team, LL_Debug);
             if (ShowMessage('TeamChange'))
             {
-                if (Players[i].bSpectator)
+                Str = FormatPlayerName(Players[i].PRI,, OldTeam);
+                if (Players[i].Team >= 0)
                 {
-                    ReporterMessage(FormatPlayerName(Players[i].PRI) @ "became a spectator.");
+                    ReporterMessage(Str @ "joined the" @ FormatTeamName(Players[i].Team) $ ".");
                 }
-                else if (Players[i].Team != none)
+                else if (Players[i].Team == -1 && OldTeam == -2)
                 {
-                    ReporterMessage(FormatPlayerName(Players[i].PRI) @ "joined the" @
-                        FormatTeamName(Players[i].TeamIdx) $ ".");
+                    ReporterMessage(Str @ "joined the game.");
                 }
-                else
+                else if (Players[i].Team == -2)
                 {
-                    ReporterMessage(FormatPlayerName(Players[i].PRI) @ "joined the game.");
+                    ReporterMessage(Str @ "became a spectator.");
                 }
             }
         }
@@ -730,7 +758,7 @@ function CheckGameStatus()
 function InGameChat(string Nick, string Text)
 {
     if (bEnableChat && bEnableTwoWayChat)
-        ReporterSpectator.ServerSay(Nick $ ":" @ Text);
+        ReporterSpectator.ServerSay(Nick $ ":" @ StripFormat(Text));
 }
 
 ////////// IRC handlers
@@ -747,6 +775,7 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
 {
     local string Cmd, Arg;
     local string Str;
+    local array<PlayerReplicationInfo> PRIArray;
     local PlayerReplicationInfo PRI;
 
     if (Left(Message.Params[1], Len(CommandPrefix)) == CommandPrefix)
@@ -757,16 +786,20 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
         {
             if (Cmd ~= "players")
             {
+                WorldInfo.GRI.SortPRIArray();
+                WorldInfo.GRI.GetPRIArray(PRIArray);
                 Str = "";
-                foreach WorldInfo.GRI.PRIArray(PRI)
+                foreach PRIArray(PRI)
                 {
                     if (PRI.bOnlySpectator)
                         continue;
 
                     if (Str != "")
                         Str $= " ";
-                    Str $= PRI.GetPlayerAlias() $ "(" $ int(PRI.Score) $ ")";
+                    Str $= FormatPlayerName(PRI) $ "(" $ int(PRI.Score) $ ")";
                 }
+                if (Str == "")
+                    Str = "The server is empty.";
                 ReporterMessage(Str);
             }
             else if (Cmd ~= "scores")

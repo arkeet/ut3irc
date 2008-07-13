@@ -4,6 +4,9 @@
 class IrcChannel extends Object
     dependson(IrcClient);
 
+// TODO: handle modes with lists (such as ban lists)
+// or perhaps ignore them
+
 struct ChannelUser
 {
     var string Nick;
