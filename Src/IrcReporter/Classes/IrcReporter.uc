@@ -379,8 +379,6 @@ function bool ShowMessage(name MessageType)
 {
     local MessageFilter F;
 
-    Log("ShowMessage" @ MessageType, LL_Debug);
-
     foreach MessageTypes(F)
     {
         if (F.MessageType == MessageType)
@@ -761,6 +759,18 @@ function InGameChat(string Nick, string Text)
         ReporterSpectator.ServerSay(Nick $ ":" @ StripFormat(Text));
 }
 
+function bool IsAdmin(string Mask)
+{
+    local string AdminMask;
+
+    foreach AdminHostmasks(AdminMask)
+    {
+        if (MatchString(AdminMask, Mask))
+            return true;
+    }
+    return false;
+}
+
 ////////// IRC handlers
 
 function IrcReporter_Handler_JOIN(IrcMessage Message)
@@ -791,12 +801,13 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
                 Str = "";
                 foreach PRIArray(PRI)
                 {
-                    if (PRI.bOnlySpectator)
+                    if (IrcSpectator(PRI.Owner) != none)
                         continue;
 
                     if (Str != "")
                         Str $= " ";
-                    Str $= FormatPlayerName(PRI) $ "(" $ int(PRI.Score) $ ")";
+                    Str $= FormatPlayerName(PRI) $ "(" $
+                        (PRI.bOnlySpectator ? "Spec" : string(int(PRI.Score))) $ ")";
                 }
                 if (Str == "")
                     Str = "The server is empty.";
@@ -821,13 +832,15 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
         }
         if (Cmd ~= "cmd")
         {
-            foreach AdminHostmasks(Str)
+            if (IsAdmin(Message.Prefix))
+                SendLine(Arg);
+        }
+        else if (Cmd ~= "admin")
+        {
+            if (IsAdmin(Message.Prefix))
             {
-                if (MatchString(Str, Message.Prefix))
-                {
-                    SendLine(Arg);
-                    break;
-                }
+                Log("Admin command:" @ Arg, LL_Debug);
+                ReporterSpectator.Admin(Arg);
             }
         }
     }

@@ -26,6 +26,37 @@ var string Topic;
 var array<ChannelMode> Modes;
 var array<ChannelUser> Users;
 
+function Join(string Nick)
+{
+    local ChannelUser U, NewUser;
+
+    foreach Users(U)
+    {
+        if (U.Nick ~= Nick)
+        {
+            Irc.Log(Nick @ "joined" @ Channel @ "when the channel already has" @ U.Nick,
+                LL_Warning);
+            return;
+        }
+    }
+
+    NewUser.Nick = Nick;
+    Users.AddItem(NewUser);
+    Irc.Log(Nick @ "joined" @ Channel, LL_Debug);
+}
+
+function Part(string Nick)
+{
+    local int i;
+
+    for (i = 0; i < Users.Length; ++i)
+    {
+        if (Users[i].Nick ~= Nick)
+            Users.Remove(i--, 1);
+    }
+    Irc.Log(Nick @ "left" @ Channel, LL_Debug);
+}
+
 function NickChange(string OldNick, string NewNick)
 {
     local ChannelUser U;

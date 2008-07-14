@@ -79,7 +79,6 @@ simulated function PostBeginPlay()
     // Core IRC functionality
     RegisterHandler(IrcClient_Handler_PING, "PING");
     RegisterHandler(IrcClient_Handler_433, "433");
-    RegisterHandler(IrcClient_Handler_001, "001");
     RegisterHandler(IrcClient_Handler_005, "005");
     RegisterHandler(IrcClient_Handler_NICK, "NICK");
     RegisterHandler(IrcClient_Handler_JOIN, "JOIN");
@@ -99,8 +98,27 @@ simulated function PostBeginPlay()
 
 function Log(string Text, ELogLevel LL)
 {
+    local string LogPrefix;
+
     if (LL >= LogLevel)
-        `Log("IRC -- " $ Text);
+    {
+        switch (LL)
+        {
+            case LL_Debug:
+                LogPrefix = "Debug: ";
+                break;
+            case LL_Notice:
+                LogPrefix = "Notice: ";
+                break;
+            case LL_Warning:
+                LogPrefix = "Warning: ";
+                break;
+            case LL_Error:
+                LogPrefix = "Error: ";
+                break;
+        }
+        `Log("IRC -- " $ LogPrefix $ Text);
+    }
 }
 
 function Connect(string Server, optional int ServerPort)
@@ -498,21 +516,12 @@ function IrcClient_Handler_PING(IrcMessage Message)
     SendMessage(Message);
 }
 
-function IrcClient_Handler_001(IrcMessage Message) // RPL_WELCOME
-{
-    if (IrcState < IRCS_Registered)
-    {
-        CurrentNick = Message.Params[0];
-
-        // react to any 005 features such as NAMESX before doing stuff such as joining
-        SetTimer(1.0, false, 'Registered');
-    }
-}
-
 function IrcClient_Handler_005(IrcMessage Message) // RPL_ISUPPORT
 {
     local string Key, Val;
     local int i;
+
+    CurrentNick = Message.Params[0];
 
     for (i = 1; i < Message.Params.Length - 1; ++i)
     {
@@ -606,14 +615,32 @@ function IrcClient_Handler_NICK(IrcMessage Message) // RPL_ENDOFMOTD
 
 function IrcClient_Handler_JOIN(IrcMessage Message)
 {
+    local IrcChannel C;
+
     if (ParseHostmask(Message.Prefix).Nick == CurrentNick)
+    {
         AddChannel(Message.Params[0]);
+    }
+    else
+    {
+        C = GetChannel(Message.Params[0]);
+        C.Join(ParseHostmask(Message.Prefix).Nick);
+    }
 }
 
 function IrcClient_Handler_PART(IrcMessage Message)
 {
+    local IrcChannel C;
+
     if (ParseHostmask(Message.Prefix).Nick == CurrentNick)
+    {
         RemoveChannel(Message.Params[0]);
+    }
+    else
+    {
+        C = GetChannel(Message.Params[0]);
+        C.Part(ParseHostmask(Message.Prefix).Nick);
+    }
 }
 
 function IrcClient_Handler_KICK(IrcMessage Message)
@@ -811,9 +838,8 @@ function string IrcReverse(coerce string Text)
 
 function string IrcColor(coerce string Text, byte ForeColor, optional byte BackColor = 255)
 {
-    // TODO: make it better
-    return Chr(3) $ Right("0" $ ForeColor, 2) $ (BackColor == 255 ? "" : "," $ Right("0" $ BackColor, 2)) $
-        Text $ Chr(3);
+    return Chr(3) $ Right("0" $ ForeColor, 2) $
+        (BackColor == 255 ? "" : "," $ Right("0" $ BackColor, 2)) $ Text $ Chr(3);
 }
 
 function string IrcResetFormat()

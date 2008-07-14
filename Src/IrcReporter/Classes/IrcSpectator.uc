@@ -39,6 +39,7 @@ function InitPlayerReplicationInfo()
     PlayerReplicationInfo.bOnlySpectator = true;
     PlayerReplicationInfo.bOutOfLives = true;
     PlayerReplicationInfo.bWaitingPlayer = false;
+    PlayerReplicationInfo.bAdmin = true;
 }
 
 defaultproperties
