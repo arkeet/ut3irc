@@ -65,6 +65,9 @@ var config int ThrottleMaxMessageQueue;
 var float ThrottlePenalty;
 var array<string> ThrottleQueue;
 
+var config bool bRejoinOnKick;
+var config bool bReconnectOnDisconnect; // TODO
+
 struct IrcEvent
 {
     var string Command;
@@ -324,10 +327,6 @@ function Hostmask ParseHostmask(coerce string Str)
     return Result;
 }
 
-function string Timeleft()
-{
-}
-
 function RegisterHandler(delegate<IrcEventDelegate> Handler, optional string Command)
 {
     local IrcEvent E;
@@ -451,6 +450,11 @@ function IrcChannel GetChannel(string Channel, optional out int Index)
     return none;
 }
 
+function bool IsChannel(string Channel)
+{
+    return (Channel != "" && InStr(ChanTypes, Left(Channel, 1)) != -1);
+}
+
 ////////// IRC events
 
 function ReceivedMessage(IrcMessage Message)
@@ -527,18 +531,18 @@ function IrcClient_Handler_005(IrcMessage Message) // RPL_ISUPPORT
     {
         Split2("=", Message.Params[i], Key, Val);
 
-        if (Key == "PREFIX")
+        if (Key ~= "PREFIX")
         {
             Split2(")", Mid(Val, 1), UserModes, UserModePrefixes);
             Log("This server supports channel user modes:" @
                 UserModes @ UserModePrefixes, LL_Debug);
         }
-        else if (Key == "CHANTYPES")
+        else if (Key ~= "CHANTYPES")
         {
             ChanTypes = Val;
             Log("This server supports channel types:" @ ChanTypes, LL_Debug);
         }
-        else if (Key == "CHANMODES")
+        else if (Key ~= "CHANMODES")
         {
             Split2(",", Val, ChanModesA, Val);
             Split2(",", Val, ChanModesB, Val);
@@ -547,32 +551,32 @@ function IrcClient_Handler_005(IrcMessage Message) // RPL_ISUPPORT
             Log("This server supports channel modes:" @
                 ChanModesA @ ChanModesB @ ChanModesC @ ChanModesD, LL_Debug);
         }
-        else if (Key == "MODES")
+        else if (Key ~= "MODES")
         {
             MaxModes = int(Val);
             Log("This server supports" @ MaxModes @ "mode changes at once", LL_Debug);
         }
-        else if (Key == "MAXCHANNELS")
+        else if (Key ~= "MAXCHANNELS")
         {
             MaxChannels = int(Val);
             Log("This server's channel limit is" @ MaxChannels, LL_Debug);
         }
-        else if (Key == "NICKLEN")
+        else if (Key ~= "NICKLEN")
         {
             MaxNickLength = int(Val);
             Log("This server's nick length limit is" @ MaxNickLength, LL_Debug);
         }
-        else if (Key == "TOPICLEN")
+        else if (Key ~= "TOPICLEN")
         {
             MaxTopicLength = int(Val);
             Log("This server's topic length limit is" @ MaxTopicLength, LL_Debug);
         }
-        else if (Key == "NETWORK")
+        else if (Key ~= "NETWORK")
         {
             NetworkName = Val;
             Log("This server's network name is" @ NetworkName, LL_Debug);
         }
-        else if (Key == "NAMESX")
+        else if (Key ~= "NAMESX")
         {
             SendLine("PROTOCTL NAMESX");
             Log("This server supports NAMESX", LL_Debug);
@@ -607,8 +611,11 @@ function IrcClient_Handler_NICK(IrcMessage Message) // RPL_ENDOFMOTD
     OldNick = ParseHostmask(Message.Prefix).Nick;
     NewNick = Message.Params[0];
 
-    if (OldNick == CurrentNick)
+    if (OldNick ~= CurrentNick)
+    {
+        Log("Changed nick to" @ NewNick, LL_Notice);
         CurrentNick = NewNick;
+    }
     foreach Channels(C)
         C.NickChange(OldNick, NewNick);
 }
@@ -617,8 +624,9 @@ function IrcClient_Handler_JOIN(IrcMessage Message)
 {
     local IrcChannel C;
 
-    if (ParseHostmask(Message.Prefix).Nick == CurrentNick)
+    if (ParseHostmask(Message.Prefix).Nick ~= CurrentNick)
     {
+        Log("Joined" @ Message.Params[0], LL_Notice);
         AddChannel(Message.Params[0]);
     }
     else
@@ -632,8 +640,9 @@ function IrcClient_Handler_PART(IrcMessage Message)
 {
     local IrcChannel C;
 
-    if (ParseHostmask(Message.Prefix).Nick == CurrentNick)
+    if (ParseHostmask(Message.Prefix).Nick ~= CurrentNick)
     {
+        Log("Left" @ Message.Params[0], LL_Notice);
         RemoveChannel(Message.Params[0]);
     }
     else
@@ -645,8 +654,21 @@ function IrcClient_Handler_PART(IrcMessage Message)
 
 function IrcClient_Handler_KICK(IrcMessage Message)
 {
-    if (ParseHostmask(Message.Prefix).Nick == CurrentNick)
+    local string Key;
+    local IrcChannel C;
+
+    if (Message.Params[1] ~= CurrentNick)
+    {
+        Log("Kicked from" @ Message.Params[0], LL_Notice);
+        C = GetChannel(Message.Params[0]);
         RemoveChannel(Message.Params[0]);
+        if (bRejoinOnKick)
+        {
+            Log("Attempting to rejoin" @ Message.Params[0], LL_Notice);
+            C.HasMode("k", Key);
+            JOIN(C.Channel, Key);
+        }
+    }
 }
 
 function IrcClient_Handler_353(IrcMessage Message) // RPL_NAMEREPLY
@@ -749,7 +771,7 @@ function USER(string user, string host, string server, string real)
 
 function JOIN(string chans, optional string keys)
 {
-    SendLine("JOIN" @ chans $ (keys == "" ? "" : " " $ keys));
+    SendLine("JOIN" @ chans @ keys);
 }
 
 function PART(string chans)
@@ -903,5 +925,8 @@ defaultproperties
     MaxModes=3
     MaxNickLength=9
     MaxTopicLength=80
+
+    bRejoinOnKick=false
+    bReconnectOnDisconnect=true
 }
 

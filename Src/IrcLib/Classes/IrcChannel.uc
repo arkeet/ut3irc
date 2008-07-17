@@ -64,7 +64,7 @@ function NickChange(string OldNick, string NewNick)
 
     foreach Users(U, i)
     {
-        if (U.Nick == OldNick)
+        if (U.Nick ~= OldNick)
             Users[i].Nick = NewNick;
     }
 }
@@ -213,7 +213,6 @@ function SetTopic(string Text)
     if (Topic != Text)
         Irc.TOPIC(Channel, Text);
 }
-
 
 defaultproperties
 {

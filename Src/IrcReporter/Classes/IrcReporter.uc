@@ -57,6 +57,25 @@ struct MessageFilter
 
 var config array<MessageFilter> MessageTypes;
 
+struct ReporterCommand
+{
+    var string CommandName;
+    var delegate<ReporterCommandDelegate> Handler;
+    var bool bHidden;
+};
+var array<ReporterCommand> Commands;
+
+delegate ReporterCommandDelegate(string Host, string Target, string Arg);
+
+function RegisterCommand(delegate<ReporterCommandDelegate> Handler, string CommandName, optional bool bHiddenCmd = false)
+{
+    local ReporterCommand C;
+    C.CommandName = CommandName;
+    C.Handler = Handler;
+    C.bHidden = bHiddenCmd;
+    Commands.AddItem(C);
+}
+
 simulated function PostBeginPlay()
 {
     super.PostBeginPlay();
@@ -68,6 +87,19 @@ simulated function PostBeginPlay()
 
     RegisterHandler(IrcReporter_Handler_JOIN, "JOIN");
     RegisterHandler(IrcReporter_Handler_PRIVMSG, "PRIVMSG");
+
+    RegisterCommand(Command_commands, "commands");
+    RegisterCommand(Command_players, "players");
+    RegisterCommand(Command_scores, "scores");
+    RegisterCommand(Command_status, "status");
+    RegisterCommand(Command_say, "say");
+    RegisterCommand(Command_cmd, "cmd");
+    RegisterCommand(Command_admin, "admin");
+    RegisterCommand(Command_topicformat, "topicformat");
+    RegisterCommand(Command_motd, "motd");
+
+    RegisterCommand(Command_wut, "wut", true);
+
     Connect(ReporterServer);
 
     WorldInfo.Game.AddGameRules(GameRulesClass);
@@ -82,9 +114,10 @@ simulated function Tick(float DeltaTime)
 
 event Destroyed()
 {
+    ReporterSpectator.Destroy();
+
     // Does this even happen?
     QUIT("Bye");
-    ReporterSpectator.Destroy();
 }
 
 function Registered()
@@ -291,8 +324,6 @@ function string FormatScoreListEntry(string ScoreName, int Score, int Team, int 
     }
 }
 
-const ColWidth = 24;
-
 function AnnounceCurrentGame()
 {
     ReporterMessage("Current game:" @ IrcBold(WorldInfo.Game.GameName)
@@ -310,6 +341,8 @@ function ShowShortTeamScores()
             );
     }
 }
+
+const ColWidth = 24;
 
 function ShowTeamScores()
 {
@@ -805,19 +838,112 @@ function InGameChat(string Nick, string Text)
         ReporterSpectator.ServerSay(Nick $ ":" @ StripFormat(Text));
 }
 
-function bool IsAdmin(string Mask)
+function bool IsAdmin(string Host)
 {
     local string AdminMask;
 
     foreach AdminHostmasks(AdminMask)
     {
-        if (MatchString(AdminMask, Mask))
+        if (MatchString(AdminMask, Host))
             return true;
     }
     return false;
 }
 
-//////////Commands
+////////// Commands
+
+function Command_commands(string Host, string Target, string Arg)
+{
+    local string Str;
+    local ReporterCommand Command;
+
+    Str = "Commands:";
+    foreach Commands(Command)
+    {
+        if (!Command.bHidden)
+            Str @= Locs(Command.CommandName);
+    }
+
+    NOTICE(ParseHostmask(Host).Nick, Str);
+}
+
+function Command_players(string Host, string Target, string Arg)
+{
+    local string Str;
+    local array<PlayerReplicationInfo> PRIArray;
+    local PlayerReplicationInfo PRI;
+
+    if (Target ~= ReporterChannel)
+    {
+        WorldInfo.GRI.SortPRIArray();
+        WorldInfo.GRI.GetPRIArray(PRIArray);
+        Str = "";
+        foreach PRIArray(PRI)
+        {
+            if (IrcSpectator(PRI.Owner) != none)
+                continue;
+
+            if (Str != "")
+                Str $= " ";
+            Str $= FormatPlayerName(PRI) $ "(" $
+                (PRI.bOnlySpectator ? "Spec" : string(int(PRI.Score))) $ ")";
+        }
+        if (Str == "")
+            Str = "The server is empty.";
+        ReporterMessage(Str);
+    }
+}
+
+function Command_scores(string Host, string Target, string Arg)
+{
+    if (Target ~= ReporterChannel)
+    {
+        ShowTeamScores();
+        ShowPlayerScores();
+    }
+}
+
+function Command_status(string Host, string Target, string Arg)
+{
+    if (Target ~= ReporterChannel)
+    {
+        AnnounceCurrentGame();
+    }
+}
+
+function Command_say(string Host, string Target, string Arg)
+{
+    if (Target ~= RealChatChannel)
+    {
+        InGameChat(ParseHostmask(Host).Nick, Arg);
+    }
+}
+
+function Command_cmd(string Host, string Target, string Arg)
+{
+    if (IsAdmin(Host))
+    {
+        SendLine(Arg);
+    }
+    else
+    {
+        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+    }
+}
+
+function Command_admin(string Host, string Target, string Arg)
+{
+    if (IsAdmin(Host))
+    {
+        Log("Admin command:" @ Arg, LL_Debug);
+        ReporterSpectator.Admin(Arg);
+    }
+    else
+    {
+        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+    }
+}
+
 function Command_topicformat(string Host, string Target, string Arg)
 {
     if (Arg == "")
@@ -861,11 +987,19 @@ function Command_motd(string Host, string Target, string Arg)
         NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
     }
 }
+
+function Command_wut(string Host, string Target, string Arg)
+{
+    if (!IsChannel(Target))
+        Target = ParseHostmask(Host).Nick;
+    PRIVMSG(Target, "wut");
+}
+
 ////////// IRC handlers
 
 function IrcReporter_Handler_JOIN(IrcMessage Message)
 {
-    if (Message.Params[0] ~= ReporterChannel && ParseHostmask(Message.Prefix).Nick == CurrentNick)
+    if (Message.Params[0] ~= ReporterChannel && ParseHostmask(Message.Prefix).Nick ~= CurrentNick)
     {
         AnnounceCurrentGame();
 
@@ -876,73 +1010,24 @@ function IrcReporter_Handler_JOIN(IrcMessage Message)
 function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
 {
     local string Cmd, Arg;
-    local string Str;
-    local array<PlayerReplicationInfo> PRIArray;
-    local PlayerReplicationInfo PRI;
+    local ReporterCommand Command;
+    local delegate<ReporterCommandDelegate> Handler;
 
     if (Left(Message.Params[1], Len(CommandPrefix)) == CommandPrefix)
     {
         Split2(" ", Mid(Message.Params[1], Len(CommandPrefix)), Cmd, Arg);
         Log("Received command: " $ Cmd, LL_Debug);
-        if (Message.Params[0] ~= ReporterChannel)
+        foreach Commands(Command)
         {
-            if (Cmd ~= "players")
+            if (Command.CommandName ~= Cmd)
             {
-                WorldInfo.GRI.SortPRIArray();
-                WorldInfo.GRI.GetPRIArray(PRIArray);
-                Str = "";
-                foreach PRIArray(PRI)
-                {
-                    if (IrcSpectator(PRI.Owner) != none)
-                        continue;
-
-                    if (Str != "")
-                        Str $= " ";
-                    Str $= FormatPlayerName(PRI) $ "(" $
-                        (PRI.bOnlySpectator ? "Spec" : string(int(PRI.Score))) $ ")";
-                }
-                if (Str == "")
-                    Str = "The server is empty.";
-                ReporterMessage(Str);
-            }
-            else if (Cmd ~= "scores")
-            {
-                ShowTeamScores();
-                ShowPlayerScores();
-            }
-            else if (Cmd ~= "status")
-            {
-                AnnounceCurrentGame();
+                Handler = Command.Handler;
+                Handler(Message.Prefix, Message.Params[0], Arg);
+                return;
             }
         }
-        if (Message.Params[0] ~= RealChatChannel)
-        {
-            if (Cmd ~= "say")
-            {
-                InGameChat(ParseHostmask(Message.Prefix).Nick, Arg);
-            }
-        }
-        if (Cmd ~= "cmd")
-        {
-            if (IsAdmin(Message.Prefix))
-                SendLine(Arg);
-        }
-        else if (Cmd ~= "admin")
-        {
-            if (IsAdmin(Message.Prefix))
-            {
-                Log("Admin command:" @ Arg, LL_Debug);
-                ReporterSpectator.Admin(Arg);
-            }
-        }
-        if (Cmd ~= "topicformat")
-        {
-            Command_topicformat(Message.Prefix, ReporterChannel, Arg);
-        }
-        if (Cmd ~= "motd")
-        {
-            Command_motd(Message.Prefix, ReporterChannel, Arg);
-        }
+        NOTICE(ParseHostmask(Message.Prefix).Nick, "Unknown command: " $ Cmd $
+            " - type " $ CommandPrefix $ "commands to see a list of commands");
     }
     else if (Message.Params[0] ~= RealChatChannel && !bRequireSayCommand)
     {
@@ -977,5 +1062,7 @@ defaultproperties
     GameRulesClass=class'UTGameRules_IrcReporter'
 
     VersionString="UT3 IrcReporter - SVN $Rev$"
+
+    bRejoinOnKick=true
 }
 
