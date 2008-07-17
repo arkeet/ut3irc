@@ -208,6 +208,13 @@ function SendMessage(string Text)
     Irc.PRIVMSG(Channel, Text);
 }
 
+function SetTopic(string Text)
+{
+    if (Topic != Text)
+        Irc.TOPIC(Channel, Text);
+}
+
+
 defaultproperties
 {
 }

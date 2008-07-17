@@ -16,6 +16,10 @@ var config bool bRequireSayCommand;
 var config string ChatChannel;
 var string RealChatChannel;
 
+var config bool bSetTopic;
+var config string TopicFormat;
+var config string Motd;
+
 var localized string RunOverString, SpiderMineString, ScorpionKamikazeString, ViperKamikazeString, TelefragString;
 
 var class<GameRules> GameRulesClass;
@@ -149,6 +153,26 @@ function ChannelMessage(string Channel, string Text, optional bool bTimestamp = 
 function ReporterMessage(string Text, optional bool bTimestamp = true)
 {
     ChannelMessage(ReporterChannel, Text, bTimestamp);
+}
+
+function ChannelTopic(string Channel, string Text)
+{
+    local IrcChannel C;
+
+    C = GetChannel(Channel);
+    if (C != none)
+    {
+        C.SetTopic(Text);
+    }
+    else
+    {
+        Log("Tried to set topic in" @ Channel @ "while not in the channel!", LL_Warning);
+    }
+}
+
+function ReporterTopic(string Text)
+{
+    ChannelTopic(ReporterChannel, Text);
 }
 
 function ChatChannelMessage(string Text, optional bool bTimestamp = true)
@@ -365,6 +389,23 @@ function ShowPlayerScores()
         Str $= " ]";
         ReporterMessage(Str);
     }
+}
+
+function UpdateReporterTopic()
+{
+    local string NewTopic;
+
+    if (!bSetTopic)
+        return;
+
+    NewTopic = Repl(TopicFormat, "%motd", Motd);
+    NewTopic = Repl(NewTopic, "%gametype", WorldInfo.Game.GameName);
+    NewTopic = Repl(NewTopic, "%map", WorldInfo.GetMapName());
+    NewTopic = Repl(NewTopic, "%numplayers", WorldInfo.Game.GetNumPlayers());
+    NewTopic = Repl(NewTopic, "%maxplayers", WorldInfo.Game.MaxPlayers);
+
+
+    ReporterTopic(NewTopic);
 }
 
 function TeamMessage(PlayerReplicationInfo PRI, coerce string S, name Type, optional float MsgLifeTime)
@@ -653,6 +694,8 @@ function NotifyLogin(Controller Entering)
         ReporterMessage(FormatPlayerName(Entering.PlayerReplicationInfo) @ Str);
     Player.Controller = Entering;
     Players.AddItem(Player);
+
+    UpdateReporterTopic();
 }
 
 function NotifyLogout(Controller Exiting)
@@ -661,6 +704,8 @@ function NotifyLogout(Controller Exiting)
         return;
     if (ShowMessage('Disconnected'))
         ReporterMessage(FormatPlayerName(Exiting.PlayerReplicationInfo) @ "disconnected.");
+
+    UpdateReporterTopic();
 }
 
 function UpdatePlayers()
@@ -731,6 +776,7 @@ function CheckGameStatus()
         switch(GameInfoState)
         {
             case 'PendingMatch':
+                UpdateReporterTopic();
                 if (!ShowMessage('GameStatus'))
                     break;
                 AnnounceCurrentGame();
@@ -771,6 +817,50 @@ function bool IsAdmin(string Mask)
     return false;
 }
 
+//////////Commands
+function Command_topicformat(string Host, string Target, string Arg)
+{
+    if (Arg == "")
+    {
+        NOTICE(ParseHostmask(Host).Nick, "Current topic format is:" @ TopicFormat);
+        return;
+    }
+
+    if (IsAdmin(Host))
+    {
+        TopicFormat = Arg;
+        default.TopicFormat = Arg;
+        UpdateReporterTopic();
+        StaticSaveConfig();
+        return;
+    }
+    else
+    {
+        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+    }
+}
+
+function Command_motd(string Host, string Target, string Arg)
+{
+    if (Arg == "")
+    {
+        NOTICE(ParseHostmask(Host).Nick, "Current message of the day is:" @ Motd);
+        return;
+    }
+
+    if (IsAdmin(Host))
+    {
+        Motd = Arg;
+        default.Motd = Arg;
+        UpdateReporterTopic();
+        StaticSaveConfig();
+        return;
+    }
+    else
+    {
+        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+    }
+}
 ////////// IRC handlers
 
 function IrcReporter_Handler_JOIN(IrcMessage Message)
@@ -778,6 +868,8 @@ function IrcReporter_Handler_JOIN(IrcMessage Message)
     if (Message.Params[0] ~= ReporterChannel && ParseHostmask(Message.Prefix).Nick == CurrentNick)
     {
         AnnounceCurrentGame();
+
+        SetTimer(2, false, 'UpdateReporterTopic');
     }
 }
 
@@ -843,6 +935,14 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
                 ReporterSpectator.Admin(Arg);
             }
         }
+        if (Cmd ~= "topicformat")
+        {
+            Command_topicformat(Message.Prefix, ReporterChannel, Arg);
+        }
+        if (Cmd ~= "motd")
+        {
+            Command_motd(Message.Prefix, ReporterChannel, Arg);
+        }
     }
     else if (Message.Params[0] ~= RealChatChannel && !bRequireSayCommand)
     {
@@ -863,6 +963,10 @@ defaultproperties
     bEnableChat=true
     bEnableTwoWayChat=true
     bRequireSayCommand=true
+
+    bSetTopic=true
+    TopicFormat=""
+    Motd=""
 
     NickName="ut3reporter"
     RealName="UT3 IRC Reporter"
