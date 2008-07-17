@@ -61,17 +61,20 @@ struct ReporterCommand
 {
     var string CommandName;
     var delegate<ReporterCommandDelegate> Handler;
+    var string Help;
     var bool bHidden;
 };
 var array<ReporterCommand> Commands;
 
 delegate ReporterCommandDelegate(string Host, string Target, string Arg);
 
-function RegisterCommand(delegate<ReporterCommandDelegate> Handler, string CommandName, optional bool bHiddenCmd = false)
+function RegisterCommand(delegate<ReporterCommandDelegate> Handler, string CommandName,
+    string Help, optional bool bHiddenCmd = false)
 {
     local ReporterCommand C;
     C.CommandName = CommandName;
     C.Handler = Handler;
+    C.Help = Help;
     C.bHidden = bHiddenCmd;
     Commands.AddItem(C);
 }
@@ -88,17 +91,28 @@ simulated function PostBeginPlay()
     RegisterHandler(IrcReporter_Handler_JOIN, "JOIN");
     RegisterHandler(IrcReporter_Handler_PRIVMSG, "PRIVMSG");
 
-    RegisterCommand(Command_commands, "commands");
-    RegisterCommand(Command_players, "players");
-    RegisterCommand(Command_scores, "scores");
-    RegisterCommand(Command_status, "status");
-    RegisterCommand(Command_say, "say");
-    RegisterCommand(Command_cmd, "cmd");
-    RegisterCommand(Command_admin, "admin");
-    RegisterCommand(Command_topicformat, "topicformat");
-    RegisterCommand(Command_motd, "motd");
-
-    RegisterCommand(Command_wut, "wut", true);
+    RegisterCommand(Command_commands, "commands",
+        "Lists the available commands.");
+    RegisterCommand(Command_help, "help",
+        "Gives more information about a command.");
+    RegisterCommand(Command_players, "players",
+        "Lists the players on the server.");
+    RegisterCommand(Command_scores, "scores",
+        "Gives a detailed score report.");
+    RegisterCommand(Command_status, "status",
+        "Gives some brief information about the current game.");
+    RegisterCommand(Command_say, "say",
+        "Relays a message to the game.");
+    RegisterCommand(Command_raw, "raw",
+        "Admins only - sends a raw IRC message.");
+    RegisterCommand(Command_admin, "admin",
+        "Admins only - runs an admin command on the UT3 server.");
+    RegisterCommand(Command_topicformat, "topicformat",
+        "Gets or sets the topic format.");
+    RegisterCommand(Command_motd, "motd",
+        "Gets or sets the message of the day.");
+    RegisterCommand(Command_wut, "wut",
+        "Wut?", true);
 
     Connect(ReporterServer);
 
@@ -431,12 +445,12 @@ function UpdateReporterTopic()
     if (!bSetTopic)
         return;
 
-    NewTopic = Repl(TopicFormat, "%motd", Motd);
+    NewTopic = TopicFormat;
+    NewTopic = Repl(NewTopic, "%motd", Motd);
     NewTopic = Repl(NewTopic, "%gametype", WorldInfo.Game.GameName);
     NewTopic = Repl(NewTopic, "%map", WorldInfo.GetMapName());
     NewTopic = Repl(NewTopic, "%numplayers", WorldInfo.Game.GetNumPlayers());
     NewTopic = Repl(NewTopic, "%maxplayers", WorldInfo.Game.MaxPlayers);
-
 
     ReporterTopic(NewTopic);
 }
@@ -867,6 +881,30 @@ function Command_commands(string Host, string Target, string Arg)
     NOTICE(ParseHostmask(Host).Nick, Str);
 }
 
+function Command_help(string Host, string Target, string Arg)
+{
+    local ReporterCommand Command;
+
+    if (Arg == "")
+    {
+        NOTICE(ParseHostmask(Host).Nick,
+            "Give a command name to see its description." @
+            "Type " $ CommandPrefix $ "commands to see a list of commands.");
+    }
+    else
+    {
+        foreach Commands(Command)
+        {
+            if (Command.CommandName ~= Arg)
+            {
+                NOTICE(ParseHostmask(Host).Nick, "Help for" @
+                    Command.CommandName $ ": " $ Command.Help);
+                return;
+            }
+        }
+    }
+}
+
 function Command_players(string Host, string Target, string Arg)
 {
     local string Str;
@@ -919,7 +957,7 @@ function Command_say(string Host, string Target, string Arg)
     }
 }
 
-function Command_cmd(string Host, string Target, string Arg)
+function Command_raw(string Host, string Target, string Arg)
 {
     if (IsAdmin(Host))
     {
@@ -1027,7 +1065,7 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
             }
         }
         NOTICE(ParseHostmask(Message.Prefix).Nick, "Unknown command: " $ Cmd $
-            " - type " $ CommandPrefix $ "commands to see a list of commands");
+            " - type " $ CommandPrefix $ "commands to see a list of commands.");
     }
     else if (Message.Params[0] ~= RealChatChannel && !bRequireSayCommand)
     {

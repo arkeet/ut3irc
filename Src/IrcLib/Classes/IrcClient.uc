@@ -717,9 +717,9 @@ function IrcClient_Handler_332(IrcMessage Message) // RPL_TOPIC
 {
     local IrcChannel C;
 
-    C = GetChannel(Message.Params[0]);
+    C = GetChannel(Message.Params[1]);
     if (C != none)
-        C.Topic = Message.Params[1];
+        C.Topic = Message.Params[2];
 }
 
 function IrcClient_Handler_TOPIC(IrcMessage Message)
