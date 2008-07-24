@@ -52,7 +52,7 @@ var config string NickName;
 var config string UserName;
 var config string RealName;
 
-var config string VersionString;
+var string VersionString;
 
 var string NamesReplyUsers;
 
@@ -241,7 +241,7 @@ static function bool MatchString(string Pattern, string Str, optional bool bCase
     return Len(Pattern) <= i;
 }
 
-static function Split2(string Separator, string Str, out string LeftPart, out string RightPart)
+static function Split2(string Separator, string Str, out string LeftPart, optional out string RightPart)
 {
     local int Pos;
 

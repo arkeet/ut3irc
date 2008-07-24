@@ -2,23 +2,14 @@
 // $Id$
 //-----------------------------------------------------------
 class IrcReporter extends IrcClient
+    dependson(ReporterChannelConfig)
     config(IrcReporter);
 
-var config string ReporterServer;
-var config string ReporterChannel;
+var config string Server;
+var config int ServerPort;
 var config string CommandPrefix;
 var config array<string> AdminHostmasks;
 var config array<string> ConnectCommands;
-
-var config bool bEnableChat;
-var config bool bEnableTwoWayChat;
-var config bool bRequireSayCommand;
-var config string ChatChannel;
-var string RealChatChannel;
-
-var config bool bSetTopic;
-var config string TopicFormat;
-var config string Motd;
 
 var localized string RunOverString, SpiderMineString, ScorpionKamikazeString, ViperKamikazeString, TelefragString;
 
@@ -49,14 +40,6 @@ struct PlayerList
 
 var array<PlayerInfo> Players;
 
-struct MessageFilter
-{
-    var name MessageType;
-    var bool bShow;
-};
-
-var config array<MessageFilter> MessageTypes;
-
 struct ReporterCommand
 {
     var string CommandName;
@@ -66,12 +49,15 @@ struct ReporterCommand
 };
 var array<ReporterCommand> Commands;
 
+var array<ReporterChannelConfig> ChannelConfigs;
+
 delegate ReporterCommandDelegate(string Host, string Target, string Arg);
 
 function RegisterCommand(delegate<ReporterCommandDelegate> Handler, string CommandName,
     string Help, optional bool bHiddenCmd = false)
 {
     local ReporterCommand C;
+
     C.CommandName = CommandName;
     C.Handler = Handler;
     C.Help = Help;
@@ -79,14 +65,50 @@ function RegisterCommand(delegate<ReporterCommandDelegate> Handler, string Comma
     Commands.AddItem(C);
 }
 
+function UnregisterCommand(string CommandName)
+{
+    local int i;
+
+    for (i = 0; i < Commands.Length; ++i)
+    {
+        if (Commands[i].CommandName ~= CommandName)
+        {
+            Commands.Remove(i--, 1);
+        }
+    }
+}
+
+function ReporterChannelConfig GetChannelConfig(string Channel)
+{
+    local ReporterChannelConfig Conf;
+
+    foreach ChannelConfigs(Conf)
+    {
+        if (Conf.Channel ~= Channel)
+            return Conf;
+    }
+    return none;
+}
+
 simulated function PostBeginPlay()
 {
+    local array<string> Chans;
+    local string C;
+    local ReporterChannelConfig Conf;
+
     super.PostBeginPlay();
 
     ReporterSpectator = Spawn(ReporterSpectatorClass);
     ReporterSpectator.Reporter = self;
 
-    RealChatChannel = (ChatChannel == "" ? ReporterChannel : ChatChannel);
+    GetPerObjectConfigSections(class'ReporterChannelConfig', Chans);
+    foreach Chans(C)
+    {
+        Split2(" ", C, C); // for some reason it gives us stuff like "#channel ReporterChannelConfig"
+        Conf = new(none, C) class'ReporterChannelConfig';
+        Conf.Channel = C;
+        ChannelConfigs.AddItem(Conf);
+    }
 
     RegisterHandler(IrcReporter_Handler_JOIN, "JOIN");
     RegisterHandler(IrcReporter_Handler_PRIVMSG, "PRIVMSG");
@@ -114,7 +136,7 @@ simulated function PostBeginPlay()
     RegisterCommand(Command_wut, "wut",
         "Wut?", true);
 
-    Connect(ReporterServer);
+    Connect(Server, ServerPort);
 
     WorldInfo.Game.AddGameRules(GameRulesClass);
 }
@@ -137,6 +159,7 @@ event Destroyed()
 function Registered()
 {
     local string Cmd;
+    local ReporterChannelConfig Conf;
 
     super.Registered();
 
@@ -145,9 +168,10 @@ function Registered()
         Cmd = Repl(Cmd, "%n", CurrentNick);
         SendLine(Cmd);
     }
-    JOIN(ReporterChannel);
-    if (!(RealChatChannel ~= ReporterChannel))
-        JOIN(RealChatChannel);
+    foreach ChannelConfigs(Conf)
+    {
+        JOIN(Conf.Channel);
+    }
 }
 
 function string FormatTime(int Time)
@@ -197,9 +221,15 @@ function ChannelMessage(string Channel, string Text, optional bool bTimestamp = 
     }
 }
 
-function ReporterMessage(string Text, optional bool bTimestamp = true)
+function ReporterMessage(string Text, name MessageType, optional bool bTimestamp = true)
 {
-    ChannelMessage(ReporterChannel, Text, bTimestamp);
+    local ReporterChannelConfig Conf;
+
+    foreach ChannelConfigs(Conf)
+    {
+        if (ShowMessage(Conf, MessageType))
+            ChannelMessage(Conf.Channel, Text, bTimestamp);
+    }
 }
 
 function ChannelTopic(string Channel, string Text)
@@ -215,16 +245,6 @@ function ChannelTopic(string Channel, string Text)
     {
         Log("Tried to set topic in" @ Channel @ "while not in the channel!", LL_Warning);
     }
-}
-
-function ReporterTopic(string Text)
-{
-    ChannelTopic(ReporterChannel, Text);
-}
-
-function ChatChannelMessage(string Text, optional bool bTimestamp = true)
-{
-    ChannelMessage(RealChatChannel, Text, bTimestamp);
 }
 
 function string StringRepeat(string Str, int Times)
@@ -338,27 +358,23 @@ function string FormatScoreListEntry(string ScoreName, int Score, int Team, int 
     }
 }
 
-function AnnounceCurrentGame()
+function string GameStatus()
 {
-    ReporterMessage("Current game:" @ IrcBold(WorldInfo.Game.GameName)
-        @ "on" @ IrcBold(WorldInfo.GetMapName()));
+    return "Current game:" @ IrcBold(WorldInfo.Game.GameName)
+        @ "on" @ IrcBold(WorldInfo.GetMapName());
 }
 
-function ShowShortTeamScores()
+function string ShortTeamScores()
 {
-    if (UTTeamGame(WorldInfo.Game) != none)
-    {
-        ReporterMessage("Current score:"
-            @ FormatTeamName(0, int(UTTeamGame(WorldInfo.Game).Teams[0].Score))
-            @ "-"
-            @ FormatTeamName(1, int(UTTeamGame(WorldInfo.Game).Teams[1].Score))
-            );
-    }
+    return "Current score:"
+        @ FormatTeamName(0, int(UTTeamGame(WorldInfo.Game).Teams[0].Score))
+        @ "-"
+        @ FormatTeamName(1, int(UTTeamGame(WorldInfo.Game).Teams[1].Score));
 }
 
 const ColWidth = 24;
 
-function ShowTeamScores()
+function string LongTeamScores()
 {
     local string Str;
     local int i;
@@ -375,11 +391,11 @@ function ShowTeamScores()
             Str $= IrcBold(FormatScoreListEntry(GetTeamName(i), Team.Score, i, ColWidth));
         }
         Str $= " ]";
-        ReporterMessage(Str);
     }
+    return Str;
 }
 
-function ShowPlayerScores()
+function array<string> PlayerScores()
 {
     local array<PlayerReplicationInfo> PRIArray;
     local PlayerReplicationInfo PRI;
@@ -389,6 +405,8 @@ function ShowPlayerScores()
     local PlayerInfo Player;
     local int MaxPlayerListLen;
     local string Str;
+
+    local array<string> Result;
 
     MaxPlayerListLen = 0;
 
@@ -434,40 +452,46 @@ function ShowPlayerScores()
             }
         }
         Str $= " ]";
-        ReporterMessage(Str);
+        Result.AddItem(Str);
     }
+
+    return Result;
 }
 
 function UpdateReporterTopic()
 {
+    local ReporterChannelConfig Conf;
     local string NewTopic;
 
-    if (!bSetTopic)
-        return;
+    foreach ChannelConfigs(Conf)
+    {
+        if (!Conf.bSetTopic)
+            continue;
 
-    NewTopic = TopicFormat;
-    NewTopic = Repl(NewTopic, "%motd", Motd);
-    NewTopic = Repl(NewTopic, "%gametype", WorldInfo.Game.GameName);
-    NewTopic = Repl(NewTopic, "%map", WorldInfo.GetMapName());
-    NewTopic = Repl(NewTopic, "%numplayers", WorldInfo.Game.GetNumPlayers());
-    NewTopic = Repl(NewTopic, "%maxplayers", WorldInfo.Game.MaxPlayers);
+        NewTopic = Conf.TopicFormat;
+        NewTopic = Repl(NewTopic, "%motd", Conf.Motd);
+        NewTopic = Repl(NewTopic, "%gametype", WorldInfo.Game.GameName);
+        NewTopic = Repl(NewTopic, "%map", WorldInfo.GetMapName());
+        NewTopic = Repl(NewTopic, "%numplayers", WorldInfo.Game.GetNumPlayers());
+        NewTopic = Repl(NewTopic, "%maxplayers", WorldInfo.Game.MaxPlayers);
 
-    ReporterTopic(NewTopic);
+        ChannelTopic(Conf.Channel, NewTopic);
+    }
 }
 
 function TeamMessage(PlayerReplicationInfo PRI, coerce string S, name Type, optional float MsgLifeTime)
 {
-    if (bEnableChat && Type == 'Say')
+    if (Type == 'Say')
     {
-        ChatChannelMessage(FormatPlayerName(PRI, PRI.GetPlayerAlias() $ ":") @ S, false);
+        ReporterMessage(FormatPlayerName(PRI, PRI.GetPlayerAlias() $ ":") @ S, 'Chat', false);
     }
 }
 
-function bool ShowMessage(name MessageType)
+function bool ShowMessage(ReporterChannelConfig Conf, name MessageType)
 {
     local MessageFilter F;
 
-    foreach MessageTypes(F)
+    foreach Conf.MessageTypes(F)
     {
         if (F.MessageType == MessageType)
             return F.bShow;
@@ -477,9 +501,7 @@ function bool ShowMessage(name MessageType)
 
 function ThrottleDropEvent()
 {
-    ReporterMessage("I had to drop some messages to catch up.");
-    if (!(RealChatChannel ~= ReporterChannel))
-        ChatChannelMessage("I had to drop some messages to catch up.");
+    ReporterMessage("I had to drop some messages to catch up.", 'Throttle');
 }
 
 function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switch, optional PlayerReplicationInfo RelatedPRI_1, optional PlayerReplicationInfo RelatedPRI_2, optional Object OptionalObject)
@@ -491,22 +513,16 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
     PRI1Name = RelatedPri_1 != none ? FormatPlayerName(RelatedPRI_1) : "someone";
     PRI2Name = RelatedPri_2 != none ? FormatPlayerName(RelatedPRI_2) : "someone";
 
-    Log(self @ "ReceiveLocalizedMessage" @ Message @ switch @
-        RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
+    //Log(self @ "ReceiveLocalizedMessage" @ Message @ switch @
+        //RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
 
     if (ClassIsChildOf(Message, class'UTStartupMessage'))
     {
-        if (!ShowMessage('Startup'))
-            return;
-
         if (Switch == 5)
-            ReporterMessage("The match has begun!");
+            ReporterMessage("The match has begun!", 'Startup');
     }
     else if (ClassIsChildOf(Message, class'UTDeathMessage'))
     {
-        if (!ShowMessage('Kill'))
-            return;
-
         Str = ".";
         DT = Class<UTDamageType>(OptionalObject);
         if (DT != None)
@@ -528,24 +544,20 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
             Str = " (" $ Str $ ").";
 
         if (RelatedPRI_1 == none)
-            ReporterMessage(PRI2Name @ "killed" @ (RelatedPRI_2.bIsFemale ? "herself" : "himself") $ Str);
+            ReporterMessage(PRI2Name @ "killed" @ (RelatedPRI_2.bIsFemale ?
+                "herself" : "himself") $ Str, 'Kill');
         else
-            ReporterMessage(PRI1Name @ "killed" @ PRI2Name $ Str);
+            ReporterMessage(PRI1Name @ "killed" @ PRI2Name $ Str, 'Kill');
     }
     else if (ClassIsChildOf(Message, class'UTFirstBloodMessage'))
     {
-        if (!ShowMessage('FirstBlood'))
-            return;
-        ReporterMessage(PRI1Name @ "drew first blood!");
+        ReporterMessage(PRI1Name @ "drew first blood!", 'FirstBlood');
     }
     else if (ClassIsChildOf(Message, class'UTKillingSpreeMessage'))
     {
-        if (!ShowMessage('Spree'))
-            return;
-
         if (RelatedPRI_2 == none)
         {
-            ReporterMessage(PRI1Name @ class'UTKillingSpreeMessage'.default.SpreeNote[Switch]);
+            ReporterMessage(PRI1Name @ class'UTKillingSpreeMessage'.default.SpreeNote[Switch], 'Spree');
         }
         else
         {
@@ -554,20 +566,17 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
                 Str = RelatedPRI_1.bIsFemale ?
                     class'UTKillingSpreeMessage'.default.EndFemaleSpree :
                     class'UTKillingSpreeMessage'.default.EndSelfSpree;
-                ReporterMessage(PRI1Name @ Str);
+                ReporterMessage(PRI1Name @ Str, 'Spree');
             }
             else
             {
                 Str = class'UTKillingSpreeMessage'.default.EndSpreeNote;
-                ReporterMessage(PRI1Name @ Str @ PRI2Name);
+                ReporterMessage(PRI1Name @ Str @ PRI2Name, 'Spree');
             }
         }
     }
     else if (ClassIsChildOf(Message, class'UTCarriedObjectMessage'))
     {
-        if (!ShowMessage('CarriedObject'))
-            return;
-
         Str = (Switch < 7 ? "Red" : "Blue");
 
         if (Message == class'UTCTFMessage')
@@ -604,88 +613,78 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
                 break;
         }
 
-        ReporterMessage(Str $ ".");
+        ReporterMessage(Str $ ".", 'CarriedObject');
     }
     else if (ClassIsChildOf(Message, class'UTTeamScoreMessage'))
     {
-        if (!ShowMessage('TeamScore'))
-            return;
         if (Switch < 6)
         {
             switch (Switch / 2)
             {
                 case 0:
-                    ReporterMessage(FormatTeamName(Switch % 2) @ "scores!");
+                    ReporterMessage(FormatTeamName(Switch % 2) @ "scores!", 'TeamScore');
                     break;
                 case 1:
-                    ReporterMessage(FormatTeamName(Switch % 2) @ "increases their lead!");
+                    ReporterMessage(FormatTeamName(Switch % 2) @ "increases their lead!", 'TeamScore');
                     break;
                 case 2:
-                    ReporterMessage(FormatTeamName(Switch % 2) @ "has taken the lead!");
+                    ReporterMessage(FormatTeamName(Switch % 2) @ "has taken the lead!", 'TeamScore');
                     break;
             }
-            ShowShortTeamScores();
+            ReporterMessage(ShortTeamScores(), 'TeamScore');
         }
     }
     else if (ClassIsChildOf(Message, class'UTTimerMessage'))
     {
-        if (!ShowMessage('Overtime'))
-            return;
         if (Switch == 17)
         {
-            ReporterMessage("Overtime!");
+            ReporterMessage("Overtime!", 'Overtime');
         }
     }
     // TODO: better onslaught support
     else if (ClassIsChildOf(Message, class'UTOnslaughtMessage'))
     {
-        if (!ShowMessage('Onslaught'))
-            return;
-
         Str = UTGameObjective(OptionalObject).ObjectiveName @ "node";
 
         switch (Switch)
         {
             case 0:
             case 1:
-                ReporterMessage(FormatTeamName(Switch - 0,, true) @ "wins the round!");
+                ReporterMessage(FormatTeamName(Switch - 0,, true) @ "wins the round!", 'Onslaught');
                 break;
             case 2:
             case 3:
-                ReporterMessage(FormatTeamName(Switch - 2,, true) @ "power node constructed.");
+                ReporterMessage(FormatTeamName(Switch - 2,, true) @ "power node constructed.", 'Onslaught');
                 break;
             case 4:
-                ReporterMessage("Draw - both cores drained!");
+                ReporterMessage("Draw - both cores drained!", 'Onslaught');
                 break;
             case 9:
             case 10:
-//                ReporterMessage(FormatTeamName(Switch - 9,, true) @ "Prime Node under attack!");
+//                ReporterMessage(FormatTeamName(Switch - 9,, true) @ "Prime Node under attack!", 'Onslaught');
                 break;
             case 11:
-                ReporterMessage("2 points for regulation win.");
+                ReporterMessage("2 points for regulation win.", 'Onslaught');
                 break;
             case 12:
-                ReporterMessage("1 point for overtime win.");
+                ReporterMessage("1 point for overtime win.", 'Onslaught');
                 break;
             case 16:
             case 17:
-                ReporterMessage(FormatTeamName(Switch - 2,, true) @ "power node destroyed.");
+                ReporterMessage(FormatTeamName(Switch - 2,, true) @ "power node destroyed.", 'Onslaught');
                 break;
             case 23:
             case 24:
-                ReporterMessage(FormatTeamName(Switch - 23,, true) @ "power node under construction.");
+                ReporterMessage(FormatTeamName(Switch - 23,, true) @ "power node under construction.", 'Onslaught');
                 break;
             case 27:
             case 28:
-                ReporterMessage(FormatTeamName(Switch - 27,, true) @ "power node isolated!");
+                ReporterMessage(FormatTeamName(Switch - 27,, true) @ "power node isolated!", 'Onslaught');
                 break;
         }
     }
     else if (ClassIsChildOf(Message, class'UTOnslaughtBlueCoreMessage'))
     {
-        if (!ShowMessage('OnslaughtCore'))
-            return;
-
         if (ClassIsChildOf(Message, class'UTOnslaughtRedCoreMessage'))
             Str = FormatTeamName(0, "Red core");
         else
@@ -694,28 +693,28 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
         switch (Switch)
         {
             case 0:
-//                ReporterMessage(Str @ "is under attack!");
+//                ReporterMessage(Str @ "is under attack!", 'OnslaughtCore');
                 break;
             case 1:
-                ReporterMessage(Str @ "destroyed!");
+                ReporterMessage(Str @ "destroyed!", 'OnslaughtCore');
                 break;
             case 2:
-                ReporterMessage(Str @ "is critical!");
+                ReporterMessage(Str @ "is critical!", 'OnslaughtCore');
                 break;
             case 3:
-                ReporterMessage(Str @ "is vulnerable!");
+                ReporterMessage(Str @ "is vulnerable!", 'OnslaughtCore');
                 break;
             case 4:
-                ReporterMessage(Str @ "is heavily damaged!");
+                ReporterMessage(Str @ "is heavily damaged!", 'OnslaughtCore');
                 break;
             case 6:
-                ReporterMessage(Str @ "is secure!");
+                ReporterMessage(Str @ "is secure!", 'OnslaughtCore');
                 break;
         }
     }
-    else if (ShowMessage('Misc'))
+    else
     {
-        ReporterMessage(Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject));
+        ReporterMessage(Message.static.GetString(Switch,, RelatedPRI_1, RelatedPRI_2, OptionalObject), 'Misc');
     }
 }
 
@@ -737,8 +736,7 @@ function NotifyLogin(Controller Entering)
         Str = "connected as spectator.";
     else
         Str = "connected.";
-    if (ShowMessage('Connected'))
-        ReporterMessage(FormatPlayerName(Entering.PlayerReplicationInfo) @ Str);
+    ReporterMessage(FormatPlayerName(Entering.PlayerReplicationInfo) @ Str, 'Connected');
     Player.Controller = Entering;
     Players.AddItem(Player);
 
@@ -749,8 +747,7 @@ function NotifyLogout(Controller Exiting)
 {
     if (Exiting == none || Exiting.PlayerReplicationInfo == none)
         return;
-    if (ShowMessage('Disconnected'))
-        ReporterMessage(FormatPlayerName(Exiting.PlayerReplicationInfo) @ "disconnected.");
+    ReporterMessage(FormatPlayerName(Exiting.PlayerReplicationInfo) @ "disconnected.", 'Disconnected');
 
     UpdateReporterTopic();
 }
@@ -779,11 +776,8 @@ function UpdatePlayers()
 
         if (Players[i].PlayerName != Players[i].PRI.GetPlayerAlias())
         {
-            if (ShowMessage('NameChange'))
-            {
-                ReporterMessage(FormatPlayerName(Players[i].PRI, Players[i].PlayerName) @
-                    "changed name to" @ FormatPlayerName(Players[i].PRI));
-            }
+            ReporterMessage(FormatPlayerName(Players[i].PRI, Players[i].PlayerName) @
+                "changed name to" @ FormatPlayerName(Players[i].PRI), 'NameChange');
             Players[i].PlayerName = Players[i].PRI.GetPlayerAlias();
         }
 
@@ -792,21 +786,18 @@ function UpdatePlayers()
             OldTeam = Players[i].Team;
             Players[i].Team = GetTeamIdx(Players[i].PRI);
             Log(Players[i].PlayerName @ "team change from" @ OldTeam @ "to" @ Players[i].Team, LL_Debug);
-            if (ShowMessage('TeamChange'))
+            Str = FormatPlayerName(Players[i].PRI,, OldTeam);
+            if (Players[i].Team >= 0)
             {
-                Str = FormatPlayerName(Players[i].PRI,, OldTeam);
-                if (Players[i].Team >= 0)
-                {
-                    ReporterMessage(Str @ "joined the" @ FormatTeamName(Players[i].Team) $ ".");
-                }
-                else if (Players[i].Team == -1 && OldTeam == -2)
-                {
-                    ReporterMessage(Str @ "joined the game.");
-                }
-                else if (Players[i].Team == -2)
-                {
-                    ReporterMessage(Str @ "became a spectator.");
-                }
+                ReporterMessage(Str @ "joined the" @ FormatTeamName(Players[i].Team) $ ".", 'TeamChange');
+            }
+            else if (Players[i].Team == -1 && OldTeam == -2)
+            {
+                ReporterMessage(Str @ "joined the game.", 'TeamChange');
+            }
+            else if (Players[i].Team == -2)
+            {
+                ReporterMessage(Str @ "became a spectator.", 'TeamChange');
             }
         }
     }
@@ -815,6 +806,8 @@ function UpdatePlayers()
 function CheckGameStatus()
 {
     local name GameInfoState;
+    local array<string> Arr;
+    local string Str;
 
     GameInfoState = WorldInfo.Game.GetStateName();
     if (GameInfoState != LastGameInfoState)
@@ -824,23 +817,25 @@ function CheckGameStatus()
         {
             case 'PendingMatch':
                 UpdateReporterTopic();
-                if (!ShowMessage('GameStatus'))
-                    break;
-                AnnounceCurrentGame();
+                ReporterMessage(GameStatus(), 'GameStatus');
                 break;
             case 'MatchOver':
-                if (!ShowMessage('MatchOver'))
-                    break;
-                ReporterMessage("Match has ended.");
-                ShowTeamScores();
-                ShowPlayerScores();
+                ReporterMessage("Match has ended.", 'MatchOver');
+                ReporterMessage(LongTeamScores(), 'MatchOver');
+                Arr = PlayerScores();
+                foreach Arr(Str)
+                {
+                    ReporterMessage(Str, 'MatchOver');
+                }
                 break;
             case 'RoundOver':
-                if (!ShowMessage('RoundOver'))
-                    break;
-                ReporterMessage("Round has ended.");
-                ShowTeamScores();
-                ShowPlayerScores();
+                ReporterMessage("Round has ended.", 'RoundOver');
+                ReporterMessage(LongTeamScores(), 'RoundOver');
+                Arr = PlayerScores();
+                foreach Arr(Str)
+                {
+                    ReporterMessage(Str, 'RoundOver');
+                }
                 break;
         }
     }
@@ -848,8 +843,7 @@ function CheckGameStatus()
 
 function InGameChat(string Nick, string Text)
 {
-    if (bEnableChat && bEnableTwoWayChat)
-        ReporterSpectator.ServerSay(Nick $ ":" @ StripFormat(Text));
+    ReporterSpectator.ServerSay(Nick $ ":" @ StripFormat(Text));
 }
 
 function bool IsAdmin(string Host)
@@ -862,6 +856,21 @@ function bool IsAdmin(string Host)
             return true;
     }
     return false;
+}
+
+function Reply(string Host, string Target, string Text, optional bool bPrivate = true)
+{
+    if (bPrivate)
+    {
+        Target = ParseHostmask(Host).Nick;
+        NOTICE(Target, Text);
+    }
+    else
+    {
+        if (!IsChannel(Target))
+            Target = ParseHostmask(Host).Nick;
+        PRIVMSG(Target, Text);
+    }
 }
 
 ////////// Commands
@@ -878,7 +887,7 @@ function Command_commands(string Host, string Target, string Arg)
             Str @= Locs(Command.CommandName);
     }
 
-    NOTICE(ParseHostmask(Host).Nick, Str);
+    Reply(Host, Target, Str);
 }
 
 function Command_help(string Host, string Target, string Arg)
@@ -887,7 +896,7 @@ function Command_help(string Host, string Target, string Arg)
 
     if (Arg == "")
     {
-        NOTICE(ParseHostmask(Host).Nick,
+        Reply(Host, Target,
             "Give a command name to see its description." @
             "Type " $ CommandPrefix $ "commands to see a list of commands.");
     }
@@ -897,7 +906,7 @@ function Command_help(string Host, string Target, string Arg)
         {
             if (Command.CommandName ~= Arg)
             {
-                NOTICE(ParseHostmask(Host).Nick, "Help for" @
+                Reply(Host, Target,
                     Command.CommandName $ ": " $ Command.Help);
                 return;
             }
@@ -911,50 +920,56 @@ function Command_players(string Host, string Target, string Arg)
     local array<PlayerReplicationInfo> PRIArray;
     local PlayerReplicationInfo PRI;
 
-    if (Target ~= ReporterChannel)
+    WorldInfo.GRI.SortPRIArray();
+    WorldInfo.GRI.GetPRIArray(PRIArray);
+    Str = "";
+    foreach PRIArray(PRI)
     {
-        WorldInfo.GRI.SortPRIArray();
-        WorldInfo.GRI.GetPRIArray(PRIArray);
-        Str = "";
-        foreach PRIArray(PRI)
-        {
-            if (IrcSpectator(PRI.Owner) != none)
-                continue;
+        if (IrcSpectator(PRI.Owner) != none)
+            continue;
 
-            if (Str != "")
-                Str $= " ";
-            Str $= FormatPlayerName(PRI) $ "(" $
-                (PRI.bOnlySpectator ? "Spec" : string(int(PRI.Score))) $ ")";
-        }
-        if (Str == "")
-            Str = "The server is empty.";
-        ReporterMessage(Str);
+        if (Str != "")
+            Str $= " ";
+        Str $= FormatPlayerName(PRI) $ "(" $
+            (PRI.bOnlySpectator ? "Spec" : string(int(PRI.Score))) $ ")";
     }
+    if (Str == "")
+        Str = "The server is empty.";
+    Reply(Host, Target, Str, false);
 }
 
 function Command_scores(string Host, string Target, string Arg)
 {
-    if (Target ~= ReporterChannel)
+    local array<string> Arr;
+    local string Str;
+
+    Reply(Host, Target, LongTeamScores(), false);
+    Arr = PlayerScores();
+    if (Arr.Length > 0)
     {
-        ShowTeamScores();
-        ShowPlayerScores();
+        foreach Arr(Str)
+        {
+            Reply(Host, Target, Str, false);
+        }
+    }
+    else
+    {
+        Reply(Host, Target, "There are no players on the server.", false);
     }
 }
 
 function Command_status(string Host, string Target, string Arg)
 {
-    if (Target ~= ReporterChannel)
-    {
-        AnnounceCurrentGame();
-    }
+    Reply(Host, Target, GameStatus(), false);
 }
 
 function Command_say(string Host, string Target, string Arg)
 {
-    if (Target ~= RealChatChannel)
-    {
+    local ReporterChannelConfig Conf;
+
+    Conf = GetChannelConfig(Target);
+    if (Conf != none && Conf.bEnableSay && !Conf.bRequireSayCommand)
         InGameChat(ParseHostmask(Host).Nick, Arg);
-    }
 }
 
 function Command_raw(string Host, string Target, string Arg)
@@ -965,7 +980,7 @@ function Command_raw(string Host, string Target, string Arg)
     }
     else
     {
-        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+        Reply(Host, Target, "You don't have permission to do that.");
     }
 }
 
@@ -978,69 +993,80 @@ function Command_admin(string Host, string Target, string Arg)
     }
     else
     {
-        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+        Reply(Host, Target, "You don't have permission to do that.");
     }
 }
 
 function Command_topicformat(string Host, string Target, string Arg)
 {
+    local ReporterChannelConfig Conf;
+
+    Conf = GetChannelConfig(Target);
+    if (Conf == none)
+        return;
+
     if (Arg == "")
     {
-        NOTICE(ParseHostmask(Host).Nick, "Current topic format is:" @ TopicFormat);
+        Reply(Host, Target, "Current topic format is:" @ Conf.TopicFormat);
         return;
     }
 
     if (IsAdmin(Host))
     {
-        TopicFormat = Arg;
-        default.TopicFormat = Arg;
+        Conf.TopicFormat = Arg;
         UpdateReporterTopic();
-        StaticSaveConfig();
+        Conf.SaveConfig();
         return;
     }
     else
     {
-        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+        Reply(Host, Target, "You don't have permission to do that.");
     }
 }
 
 function Command_motd(string Host, string Target, string Arg)
 {
+    local ReporterChannelConfig Conf;
+
+    Conf = GetChannelConfig(Target);
+    if (Conf == none)
+        return;
+
     if (Arg == "")
     {
-        NOTICE(ParseHostmask(Host).Nick, "Current message of the day is:" @ Motd);
+        Reply(Host, Target, "Current message of the day is:" @ Conf.Motd);
         return;
     }
 
     if (IsAdmin(Host))
     {
-        Motd = Arg;
-        default.Motd = Arg;
+        Conf.Motd = Arg;
         UpdateReporterTopic();
-        StaticSaveConfig();
+        Conf.SaveConfig();
         return;
     }
     else
     {
-        NOTICE(ParseHostmask(Host).Nick, "You don't have permission to do that.");
+        Reply(Host, Target, "You don't have permission to do that.");
     }
 }
 
 function Command_wut(string Host, string Target, string Arg)
 {
-    if (!IsChannel(Target))
-        Target = ParseHostmask(Host).Nick;
-    PRIVMSG(Target, "wut");
+    Reply(Host, Target, "wut", false);
 }
 
 ////////// IRC handlers
 
 function IrcReporter_Handler_JOIN(IrcMessage Message)
 {
-    if (Message.Params[0] ~= ReporterChannel && ParseHostmask(Message.Prefix).Nick ~= CurrentNick)
-    {
-        AnnounceCurrentGame();
+    local ReporterChannelConfig Conf;
 
+    if (ParseHostmask(Message.Prefix).Nick ~= CurrentNick)
+    {
+        Conf = GetChannelConfig(Message.Params[0]);
+        if (ShowMessage(Conf, 'GameStatus'))
+            ChannelMessage(Message.Params[0], GameStatus());
         SetTimer(2, false, 'UpdateReporterTopic');
     }
 }
@@ -1050,6 +1076,7 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
     local string Cmd, Arg;
     local ReporterCommand Command;
     local delegate<ReporterCommandDelegate> Handler;
+    local ReporterChannelConfig Conf;
 
     if (Left(Message.Params[1], Len(CommandPrefix)) == CommandPrefix)
     {
@@ -1064,12 +1091,14 @@ function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
                 return;
             }
         }
-        NOTICE(ParseHostmask(Message.Prefix).Nick, "Unknown command: " $ Cmd $
+        Reply(Message.Prefix, Message.Params[0], "Unknown command: " $ Cmd $
             " - type " $ CommandPrefix $ "commands to see a list of commands.");
     }
-    else if (Message.Params[0] ~= RealChatChannel && !bRequireSayCommand)
+    else
     {
-        InGameChat(ParseHostmask(Message.Prefix).Nick, Message.Params[1]);
+        Conf = GetChannelConfig(Message.Params[0]);
+        if (Conf != none && Conf.bEnableSay && !Conf.bRequireSayCommand)
+            InGameChat(ParseHostmask(Message.Prefix).Nick, Message.Params[1]);
     }
 }
 
@@ -1083,18 +1112,11 @@ defaultproperties
 
     ReporterSpectatorClass="IrcReporter.IrcSpectator"
 
-    bEnableChat=true
-    bEnableTwoWayChat=true
-    bRequireSayCommand=true
-
-    bSetTopic=true
-    TopicFormat=""
-    Motd=""
-
+    Server="irc.example.org"
+    ServerPort=6667
     NickName="ut3reporter"
+    UserName="ut3irc"
     RealName="UT3 IRC Reporter"
-    ReporterServer="irc.gameradius.org"
-    ReporterChannel="#ut3irc.test"
     CommandPrefix="!"
 
     GameRulesClass=class'UTGameRules_IrcReporter'
@@ -1103,4 +1125,3 @@ defaultproperties
 
     bRejoinOnKick=true
 }
-
