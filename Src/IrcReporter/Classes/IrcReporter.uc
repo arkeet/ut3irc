@@ -1,3 +1,20 @@
+/*
+   Copyright (C) 2008 Adrian Keet.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License along
+   with this program; if not, write to the Free Software Foundation, Inc.,
+   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.  */
+
 //-----------------------------------------------------------
 // $Id$
 //-----------------------------------------------------------
@@ -513,8 +530,8 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
     PRI1Name = RelatedPri_1 != none ? FormatPlayerName(RelatedPRI_1) : "someone";
     PRI2Name = RelatedPri_2 != none ? FormatPlayerName(RelatedPRI_2) : "someone";
 
-    //Log(self @ "ReceiveLocalizedMessage" @ Message @ switch @
-        //RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
+    Log(self @ "ReceiveLocalizedMessage" @ Message @ switch @
+        RelatedPRI_1 @ RelatedPRI_2 @ OptionalObject, LL_Debug);
 
     if (ClassIsChildOf(Message, class'UTStartupMessage'))
     {
@@ -561,17 +578,17 @@ function ReceiveLocalizedMessage(class<LocalMessage> Message, optional int Switc
         }
         else
         {
-            if (RelatedPRI_1 == RelatedPRI_2)
+            if (RelatedPRI_1 == RelatedPRI_2 || RelatedPRI_1 == none)
             {
-                Str = RelatedPRI_1.bIsFemale ?
-                    class'UTKillingSpreeMessage'.default.EndFemaleSpree :
-                    class'UTKillingSpreeMessage'.default.EndSelfSpree;
-                ReporterMessage(PRI1Name @ Str, 'Spree');
+                Str = RelatedPRI_2.bIsFemale ?
+                    "ended her own killing spree." :
+                    "ended his own killing spree.";
+                ReporterMessage(PRI2Name @ Str, 'Spree');
             }
             else
             {
                 Str = class'UTKillingSpreeMessage'.default.EndSpreeNote;
-                ReporterMessage(PRI1Name @ Str @ PRI2Name, 'Spree');
+                ReporterMessage(PRI1Name $ Str @ PRI2Name, 'Spree');
             }
         }
     }
