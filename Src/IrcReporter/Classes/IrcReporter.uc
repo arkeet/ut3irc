@@ -260,19 +260,16 @@ function ChannelTopic(string Channel, string Text)
     }
     else
     {
-        Log("Tried to set topic in" @ Channel @ "while not in the channel!", LL_Warning);
+        Log("Tried to set the topic of" @ Channel @ "while not in the channel!", LL_Warning);
     }
 }
 
 function string StringRepeat(string Str, int Times)
 {
     local string Result;
-    Result = "";
-    while (Times > 0)
-    {
+
+    while (Times-- > 0)
         Result $= Str;
-        --Times;
-    }
     return Result;
 }
 
@@ -879,15 +876,37 @@ function Reply(string Host, string Target, string Text, optional bool bPrivate =
 {
     if (bPrivate)
     {
-        Target = ParseHostmask(Host).Nick;
-        NOTICE(Target, Text);
+        NOTICE(ParseHostmask(Host).Nick, Text);
     }
     else
     {
-        if (!IsChannel(Target))
-            Target = ParseHostmask(Host).Nick;
-        PRIVMSG(Target, Text);
+        if (IsChannel(Target))
+            ChannelMessage(Target, Text, false);
+        else
+            PRIVMSG(ParseHostmask(Host).Nick, Text);
     }
+}
+
+function HandleCommand(string Text, IrcMessage Message)
+{
+    local string Cmd, Arg;
+    local ReporterCommand Command;
+    local delegate<ReporterCommandDelegate> Handler;
+
+    Split2(" ", Text, Cmd, Arg);
+
+    Log("Received command: " $ Cmd, LL_Debug);
+    foreach Commands(Command)
+    {
+        if (Command.CommandName ~= Cmd)
+        {
+            Handler = Command.Handler;
+            Handler(Message.Prefix, Message.Params[0], Arg);
+            return;
+        }
+    }
+    Reply(Message.Prefix, Message.Params[0], "Unknown command \"" $ Cmd $
+        "\" - type " $ CommandPrefix $ "commands to see a list of commands.");
 }
 
 ////////// Commands
@@ -985,7 +1004,7 @@ function Command_say(string Host, string Target, string Arg)
     local ReporterChannelConfig Conf;
 
     Conf = GetChannelConfig(Target);
-    if (Conf != none && Conf.bEnableSay && !Conf.bRequireSayCommand)
+    if (Conf != none && Conf.bEnableSay)
         InGameChat(ParseHostmask(Host).Nick, Arg);
 }
 
@@ -1005,8 +1024,8 @@ function Command_admin(string Host, string Target, string Arg)
 {
     if (IsAdmin(Host))
     {
-        Log("Admin command:" @ Arg, LL_Debug);
-        ReporterSpectator.Admin(Arg);
+        Log("Admin command:" @ Arg, LL_Notice);
+        ConsoleCommand(Arg);
     }
     else
     {
@@ -1031,8 +1050,8 @@ function Command_topicformat(string Host, string Target, string Arg)
     if (IsAdmin(Host))
     {
         Conf.TopicFormat = Arg;
-        UpdateReporterTopic();
         Conf.SaveConfig();
+        UpdateReporterTopic();
         return;
     }
     else
@@ -1058,8 +1077,8 @@ function Command_motd(string Host, string Target, string Arg)
     if (IsAdmin(Host))
     {
         Conf.Motd = Arg;
-        UpdateReporterTopic();
         Conf.SaveConfig();
+        UpdateReporterTopic();
         return;
     }
     else
@@ -1070,7 +1089,7 @@ function Command_motd(string Host, string Target, string Arg)
 
 function Command_wut(string Host, string Target, string Arg)
 {
-    Reply(Host, Target, "wut", false);
+    Reply(Host, Target, IrcBold("wut"), false);
 }
 
 ////////// IRC handlers
@@ -1090,32 +1109,22 @@ function IrcReporter_Handler_JOIN(IrcMessage Message)
 
 function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
 {
-    local string Cmd, Arg;
-    local ReporterCommand Command;
-    local delegate<ReporterCommandDelegate> Handler;
     local ReporterChannelConfig Conf;
+
+    Conf = GetChannelConfig(Message.Params[0]);
 
     if (Left(Message.Params[1], Len(CommandPrefix)) == CommandPrefix)
     {
-        Split2(" ", Mid(Message.Params[1], Len(CommandPrefix)), Cmd, Arg);
-        Log("Received command: " $ Cmd, LL_Debug);
-        foreach Commands(Command)
-        {
-            if (Command.CommandName ~= Cmd)
-            {
-                Handler = Command.Handler;
-                Handler(Message.Prefix, Message.Params[0], Arg);
-                return;
-            }
-        }
-        Reply(Message.Prefix, Message.Params[0], "Unknown command: " $ Cmd $
-            " - type " $ CommandPrefix $ "commands to see a list of commands.");
+        HandleCommand(Mid(Message.Params[1], Len(CommandPrefix)), Message);
+    }
+    else if (IsChannel(Message.Params[0]))
+    {
+        if (!Conf.bRequireSayCommand)
+            HandleCommand("say" @ Message.Params[1], Message);
     }
     else
     {
-        Conf = GetChannelConfig(Message.Params[0]);
-        if (Conf != none && Conf.bEnableSay && !Conf.bRequireSayCommand)
-            InGameChat(ParseHostmask(Message.Prefix).Nick, Message.Params[1]);
+        HandleCommand(Message.Params[1], Message);
     }
 }
 

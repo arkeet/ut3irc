@@ -34,6 +34,7 @@ struct ChannelMode
 {
     var string ModeChar;
     var string Parameter;
+    var array<string> List;
 };
 
 var IrcClient Irc;
@@ -95,6 +96,14 @@ function bool IsUserMode(string ModeChar, optional out string PrefixChar)
         return false;
     PrefixChar = Mid(Irc.UserModes, Pos, 1);
     return true;
+}
+
+function bool IsListMode(string ModeChar)
+{
+    local int Pos;
+
+    Pos = InStr(Irc.ChanModesA, ModeChar);
+    return (Pos != -1);
 }
 
 function bool HasParameter(string ModeChar, bool bIsSet)

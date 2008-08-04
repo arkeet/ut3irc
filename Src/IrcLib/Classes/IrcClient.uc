@@ -645,6 +645,7 @@ function IrcClient_Handler_JOIN(IrcMessage Message)
     {
         Log("Joined" @ Message.Params[0], LL_Notice);
         AddChannel(Message.Params[0]);
+        MODE(Message.Params[0]);
     }
     else
     {
