@@ -260,9 +260,9 @@ static function bool MatchString(string Pattern, string Str, optional bool bCase
 
 static function Split2(string Separator, string Str, out string LeftPart, optional out string RightPart)
 {
-    local int Pos;
+    local int SepLen, Pos;
 
-    Separator = Left(Separator, 1);
+    SepLen = Len(Separator);
     Pos = InStr(Str, Separator);
     if (Pos == -1)
     {
@@ -272,8 +272,8 @@ static function Split2(string Separator, string Str, out string LeftPart, option
     else
     {
         LeftPart = Left(Str, Pos);
-        while (Mid(Str, Pos, 1) == Separator)
-            ++Pos;
+        while (Mid(Str, Pos, SepLen) == Separator)
+            Pos += SepLen;
         RightPart = Mid(Str, Pos);
     }
 }
@@ -496,15 +496,15 @@ function ReceivedCTCP(string Command, string Text, IrcMessage Message)
     if (Command ~= "CLIENTINFO")
     {
         if (Text == "")
-            Response = "Supported tags: PING,VERSION,CLIENTINFO,ACTION - Use 'CLIENTINFO <tag>' for a description of each tag";
+            Response = "Supported tags: PING,VERSION,TIME,CLIENTINFO,ACTION - Use 'CLIENTINFO <tag>' for a description of each tag";
         else if (Text ~= "PING")
             Response = "PING: Returns given parameters without parsing them";
         else if (Text ~= "VERSION")
             Response = "VERSION: Returns the version of this client";
+        else if (Text ~= "TIME")
+            Response = "TIME: Returns the current local time";
         else if (Text ~= "CLIENTINFO")
             Response = "CLIENTINFO: With no parameters, lists supported CTCP tags, 'CLIENTINFO <tag>' describes <tag>";
-//        else if (Text ~= "TIME")
-//            Response = "TIME: Returns the current local time";
         else if (Text ~= "ACTION")
             Response = "ACTION: Used to describe actions, generates no reply";
         else
@@ -517,6 +517,8 @@ function ReceivedCTCP(string Command, string Text, IrcMessage Message)
         Response = Text;
     else if (Command ~= "VERSION")
         Response = VersionString;
+    else if (Command ~= "TIME")
+        Response = TimeStamp();
 
     if (Response != "")
         CTCPReply(ParseHostmask(Message.Prefix).Nick, Command @ Response);

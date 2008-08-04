@@ -884,7 +884,7 @@ function bool IsAdmin(string Host)
 function bool IsIgnored(string Host)
 {
     local string IgnoreMask;
-    
+
     if (IsAdmin(Host))
         return false;
 
@@ -1129,13 +1129,13 @@ function Command_ignore(string Host, string Target, string Arg)
         {
             if (IgnoreMask ~= Arg)
             {
-                Reply(Host, Target, Arg @ "is already in the ignore list.");
+                Reply(Host, Target, Arg @ "is already on the ignore list.");
                 return;
             }
         }
 
         IgnoreHostmasks.AddItem(Arg);
-        default.IgnoreHostmasks.AddItem(Arg);
+        default.IgnoreHostmasks = IgnoreHostmasks;
         StaticSaveConfig();
         Reply(Host, Target, Arg @ "added to the ignore list.");
         return;
@@ -1158,18 +1158,18 @@ function Command_unignore(string Host, string Target, string Arg)
 
     if (IsAdmin(Host))
     {
-        for (i = 0; i < Commands.Length; i++)
+        for (i = 0; i < IgnoreHostmasks.Length; ++i)
         {
             if (IgnoreHostmasks[i] ~= Arg)
             {
-                IgnoreHostmasks.Remove(i, 1);
-                default.IgnoreHostmasks.Remove(i, 1);
+                IgnoreHostmasks.Remove(i--, 1);
+                default.IgnoreHostmasks = IgnoreHostmasks;
                 StaticSaveConfig();
                 Reply(Host, Target, Arg @ "removed from the ignore list.");
                 return;
             }
         }
-        Reply(Host, Target, Arg @ "is not in the ignore list.");
+        Reply(Host, Target, Arg @ "is not on the ignore list.");
     }
     else
     {
