@@ -26,6 +26,7 @@ var config string Server;
 var config int ServerPort;
 var config string CommandPrefix;
 var config array<string> AdminHostmasks;
+var config array<string> IgnoreHostmasks;
 var config array<string> ConnectCommands;
 
 var localized string RunOverString, SpiderMineString, ScorpionKamikazeString, ViperKamikazeString, TelefragString;
@@ -61,7 +62,8 @@ struct ReporterCommand
 {
     var string CommandName;
     var delegate<ReporterCommandDelegate> Handler;
-    var string Help;
+    var string Usage;
+    var string Description;
     var bool bHidden;
 };
 var array<ReporterCommand> Commands;
@@ -71,13 +73,14 @@ var array<ReporterChannelConfig> ChannelConfigs;
 delegate ReporterCommandDelegate(string Host, string Target, string Arg);
 
 function RegisterCommand(delegate<ReporterCommandDelegate> Handler, string CommandName,
-    string Help, optional bool bHiddenCmd = false)
+    string Usage, string Description, optional bool bHiddenCmd = false)
 {
     local ReporterCommand C;
 
     C.CommandName = CommandName;
     C.Handler = Handler;
-    C.Help = Help;
+    C.Usage = Usage;
+    C.Description = Description;
     C.bHidden = bHiddenCmd;
     Commands.AddItem(C);
 }
@@ -131,27 +134,33 @@ simulated function PostBeginPlay()
     RegisterHandler(IrcReporter_Handler_PRIVMSG, "PRIVMSG");
 
     RegisterCommand(Command_commands, "commands",
-        "Lists the available commands.");
+        "commands", "Lists the available commands.");
     RegisterCommand(Command_help, "help",
-        "Gives more information about a command.");
+        "help <command>", "Gives more information about a command.");
     RegisterCommand(Command_players, "players",
-        "Lists the players on the server.");
+        "players", "Lists the players on the server.");
     RegisterCommand(Command_scores, "scores",
-        "Gives a detailed score report.");
+        "scores", "Gives a detailed score report.");
     RegisterCommand(Command_status, "status",
-        "Gives some brief information about the current game.");
+        "status", "Gives some brief information about the current game.");
     RegisterCommand(Command_say, "say",
-        "Relays a message to the game.");
+        "say <text>", "Relays a message to the game.");
     RegisterCommand(Command_raw, "raw",
-        "Admins only - sends a raw IRC message.");
+        "raw <message>", "Admins only - sends a raw IRC message.");
     RegisterCommand(Command_admin, "admin",
-        "Admins only - runs an admin command on the UT3 server.");
+        "admin <command>", "Admins only - runs an admin command on the UT3 server.");
     RegisterCommand(Command_topicformat, "topicformat",
-        "Gets or sets the topic format.");
+        "topicformat [<format>]", "Gets or sets the topic format.");
     RegisterCommand(Command_motd, "motd",
-        "Gets or sets the message of the day.");
+        "motd [<text>]", "Gets or sets the message of the day.");
+    RegisterCommand(Command_ignore, "ignore",
+        "ignore <hostmask>", "Adds a hostmask to the ignore list.");
+    RegisterCommand(Command_unignore, "unignore",
+        "unignore <hostmask>", "Removes a hostmask from the ignore list.");
+    RegisterCommand(Command_ignorelist, "ignorelist",
+        "ignorelist", "Lists the hostmasks being ignored.");
     RegisterCommand(Command_wut, "wut",
-        "Wut?", true);
+        "wut", "Wut?", true);
 
     Connect(Server, ServerPort);
 
@@ -872,6 +881,21 @@ function bool IsAdmin(string Host)
     return false;
 }
 
+function bool IsIgnored(string Host)
+{
+    local string IgnoreMask;
+    
+    if (IsAdmin(Host))
+        return false;
+
+    foreach IgnoreHostmasks(IgnoreMask)
+    {
+        if (MatchString(IgnoreMask, Host))
+            return true;
+    }
+    return false;
+}
+
 function Reply(string Host, string Target, string Text, optional bool bPrivate = true)
 {
     if (bPrivate)
@@ -943,7 +967,9 @@ function Command_help(string Host, string Target, string Arg)
             if (Command.CommandName ~= Arg)
             {
                 Reply(Host, Target,
-                    Command.CommandName $ ": " $ Command.Help);
+                    "Usage: " $ Command.Usage);
+                Reply(Host, Target,
+                    Command.Description);
                 return;
             }
         }
@@ -1087,6 +1113,89 @@ function Command_motd(string Host, string Target, string Arg)
     }
 }
 
+function Command_ignore(string Host, string Target, string Arg)
+{
+    local string IgnoreMask;
+
+    if (Arg == "")
+    {
+        Reply(Host, Target, "Missing parameter.");
+        return;
+    }
+
+    if (IsAdmin(Host))
+    {
+        foreach IgnoreHostmasks(IgnoreMask)
+        {
+            if (IgnoreMask ~= Arg)
+            {
+                Reply(Host, Target, Arg @ "is already in the ignore list.");
+                return;
+            }
+        }
+
+        IgnoreHostmasks.AddItem(Arg);
+        default.IgnoreHostmasks.AddItem(Arg);
+        StaticSaveConfig();
+        Reply(Host, Target, Arg @ "added to the ignore list.");
+        return;
+    }
+    else
+    {
+        Reply(Host, Target, "You don't have permission to do that.");
+    }
+}
+
+function Command_unignore(string Host, string Target, string Arg)
+{
+    local int i;
+
+    if (Arg == "")
+    {
+        Reply(Host, Target, "Missing parameter.");
+        return;
+    }
+
+    if (IsAdmin(Host))
+    {
+        for (i = 0; i < Commands.Length; i++)
+        {
+            if (IgnoreHostmasks[i] ~= Arg)
+            {
+                IgnoreHostmasks.Remove(i, 1);
+                default.IgnoreHostmasks.Remove(i, 1);
+                StaticSaveConfig();
+                Reply(Host, Target, Arg @ "removed from the ignore list.");
+                return;
+            }
+        }
+        Reply(Host, Target, Arg @ "is not in the ignore list.");
+    }
+    else
+    {
+        Reply(Host, Target, "You don't have permission to do that.");
+    }
+}
+
+function Command_ignorelist(string Host, string Target, string Arg)
+{
+    local string IgnoreMask;
+
+    if (IsAdmin(Host))
+    {
+        Reply(Host, Target, "Ignore list:");
+
+        foreach IgnoreHostmasks(IgnoreMask)
+        {
+            Reply(Host, Target, IgnoreMask);
+        }
+    }
+    else
+    {
+        Reply(Host, Target, "You don't have permission to do that.");
+    }
+}
+
 function Command_wut(string Host, string Target, string Arg)
 {
     Reply(Host, Target, IrcBold("wut"), false);
@@ -1110,6 +1219,9 @@ function IrcReporter_Handler_JOIN(IrcMessage Message)
 function IrcReporter_Handler_PRIVMSG(IrcMessage Message)
 {
     local ReporterChannelConfig Conf;
+
+    if (IsIgnored(Message.Prefix))
+        return;
 
     Conf = GetChannelConfig(Message.Params[0]);
 

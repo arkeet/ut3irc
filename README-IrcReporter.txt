@@ -50,6 +50,10 @@ settings are fairly obvious from their name.
  * Other Settings
     - AdminHostmasks: A list of hostmasks for users that should be allowed to
       execute admin commands on the bot.
+    - IgnoreHostmasks: A list of hostmasks that the bot will ignore commands from.
+      Use the !ignore <hostmask> command to add a hostmask to this list,
+      and !unignore <hostmask> to remove a hostmask from this list.
+      Use !ignorelist to see the list of ignored hostmasks.
     - CommandPrefix: The bot has a number of commands, such as !status and
       !scores.  This setting lets you change the command prefix.
     - LogLevel: The minimum level of importants required for messages to be
