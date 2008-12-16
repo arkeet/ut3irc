@@ -84,3 +84,4 @@ function NetDamage(int OriginalDamage, out int Damage, pawn Injured, Controller 
 defaultproperties
 {
 }
+

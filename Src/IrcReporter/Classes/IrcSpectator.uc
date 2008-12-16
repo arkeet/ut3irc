@@ -64,3 +64,4 @@ defaultproperties
     bIsPlayer=false
     RemoteRole=ROLE_AutonomousProxy // For some reason this is required to make it not crash. gg epic :(
 }
+
