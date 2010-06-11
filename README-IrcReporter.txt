@@ -108,6 +108,7 @@ in the form of [#channel ReporterChannelConfig].
 ------------------------------------------------------------------------------
  Commands
 ------------------------------------------------------------------------------
+
  * Issue !commands to see a list of commands.
  * Issue !help <command> to see a description of a command.
  * The ! prefix can be changed - see CommandPrefix in Other Settings above.
@@ -115,7 +116,25 @@ in the form of [#channel ReporterChannelConfig].
 ------------------------------------------------------------------------------
  Thanks
 ------------------------------------------------------------------------------
+
  * Wormbo, for feedback and also for the Wormbot UT2004 IRC reporter bot,
    from which I have gotten a few ideas.
  * Haarg, for running FragBU with this bot.
  * Defeat, for being awesome.  <4
+
+------------------------------------------------------------------------------
+Copyright (C) 2008-2010 Adrian Keet.
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc., 51 Franklin
+Street, Fifth Floor, Boston, MA 02110-1301 USA.
